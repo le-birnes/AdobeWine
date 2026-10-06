@@ -1,0 +1,74 @@
+diff --git a/dlls/mshtml/mutation.c b/dlls/mshtml/mutation.c
+index b330bf3..91627dc 100644
+--- a/dlls/mshtml/mutation.c
++++ b/dlls/mshtml/mutation.c
+@@ -67,6 +67,53 @@ static BOOL is_iexplore(void)
+     return ret;
+ }
+ 
++/* Returns the compat mode requested via the FEATURE_BROWSER_EMULATION feature control
++ * registry key for the host process, or COMPAT_MODE_INVALID if not set. */
++static compat_mode_t get_browser_emulation_mode(void)
++{
++    static volatile char cache = -2;
++    char mode = cache;
++
++    if(mode == -2) {
++        static const WCHAR feature_keyW[] = L"Software\\Microsoft\\Internet Explorer\\Main"
++                                            L"\\FeatureControl\\FEATURE_BROWSER_EMULATION";
++        const WCHAR *p, *name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++        DWORD value, size = sizeof(value), type;
++        HKEY key;
++        LONG res;
++
++        if((p = wcsrchr(name, '/'))) name = p + 1;
++        if((p = wcsrchr(name, '\\'))) name = p + 1;
++
++        mode = -1;
++        res = RegOpenKeyExW(HKEY_CURRENT_USER, feature_keyW, 0, KEY_READ, &key);
++        if(res == ERROR_SUCCESS) {
++            res = RegQueryValueExW(key, name, NULL, &type, (BYTE*)&value, &size);
++            RegCloseKey(key);
++        }
++        if(res != ERROR_SUCCESS) {
++            res = RegOpenKeyExW(HKEY_LOCAL_MACHINE, feature_keyW, 0, KEY_READ, &key);
++            if(res == ERROR_SUCCESS) {
++                size = sizeof(value);
++                res = RegQueryValueExW(key, name, NULL, &type, (BYTE*)&value, &size);
++                RegCloseKey(key);
++            }
++        }
++
++        if(res == ERROR_SUCCESS && type == REG_DWORD) {
++            TRACE("FEATURE_BROWSER_EMULATION for %s: %lu\n", debugstr_w(name), value);
++            if(value >= 11000)     mode = COMPAT_MODE_IE11;
++            else if(value >= 10000) mode = COMPAT_MODE_IE10;
++            else if(value >= 9000)  mode = COMPAT_MODE_IE9;
++            else if(value >= 8000)  mode = COMPAT_MODE_IE8;
++            else if(value >= 7000)  mode = COMPAT_MODE_IE7;
++        }
++        cache = mode;
++    }
++
++    return mode == -1 ? COMPAT_MODE_INVALID : (compat_mode_t)mode;
++}
++
+ static PRUnichar *handle_insert_comment(HTMLDocumentNode *doc, const PRUnichar *comment)
+ {
+     unsigned majorv = 0, minorv = 0, compat_version;
+@@ -936,10 +983,14 @@ static void NSAPI nsDocumentObserver_BindToDocument(nsIDocumentObserver *iface,
+ 
+         nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMDocumentType, (void**)&nsdoctype);
+         if(NS_SUCCEEDED(nsres)) {
+-            compat_mode_t mode = COMPAT_MODE_IE7;
++            compat_mode_t emulation_mode, mode = COMPAT_MODE_IE7;
+ 
+             TRACE("doctype node\n");
+ 
++            /* FEATURE_BROWSER_EMULATION overrides the default embedded-host document mode. */
++            if((emulation_mode = get_browser_emulation_mode()) != COMPAT_MODE_INVALID)
++                mode = emulation_mode;
++
+             /* Native mshtml hardcodes special behavior for iexplore.exe here. The feature control registry
+                keys under HKLM or HKCU\Software\Microsoft\Internet Explorer\Main\FeatureControl are not used
+                in this case (neither in Wow6432Node), although FEATURE_BROWSER_EMULATION does override this,

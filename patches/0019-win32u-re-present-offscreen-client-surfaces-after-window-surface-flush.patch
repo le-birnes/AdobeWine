@@ -1,0 +1,95 @@
+diff --git a/dlls/win32u/dce.c b/dlls/win32u/dce.c
+index 0ea79d7..f36813c 100644
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -620,6 +620,7 @@ void window_surface_flush( struct window_surface *surface )
+     BITMAPINFO *color_info = (BITMAPINFO *)color_buf;
+     BITMAPINFO *shape_info = (BITMAPINFO *)shape_buf;
+     RECT dirty = surface->rect, bounds;
++    BOOL flushed = FALSE;
+     void *color_bits;
+ 
+     window_surface_lock( surface );
+@@ -642,10 +643,15 @@ void window_surface_flush( struct window_surface *surface )
+ 
+         if (surface->funcs->flush( surface, &surface->rect, &dirty, color_info, color_bits,
+                                    shape_changed, shape_info, shape_bits ))
++        {
+             reset_bounds( &surface->bounds );
++            flushed = TRUE;
++        }
+     }
+ 
+     window_surface_unlock( surface );
++
++    if (flushed && surface->hwnd) present_offscreen_client_surfaces( NtUserGetAncestor( surface->hwnd, GA_ROOT ) );
+ }
+ 
+ void window_surface_set_layered( struct window_surface *surface, COLORREF color_key, UINT alpha_bits, UINT alpha_mask )
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index 5e3f755..dc7eff1 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -331,6 +331,7 @@ extern HWND get_taskman_window(void);
+ extern BOOL is_client_surface_window( struct client_surface *surface, HWND hwnd );
+ extern void client_surface_update( struct client_surface *surface );
+ extern BOOL client_surface_get_size( struct client_surface *surface, SIZE *virtual_size, SIZE *monitor_size );
++extern void present_offscreen_client_surfaces( HWND toplevel );
+ extern void use_window_client_surface( struct client_surface *surface, BOOL use );
+ extern struct client_surface *get_unused_client_surface( HWND hwnd, int format, BOOL raw );
+ extern HICON get_window_icon_info( HWND hwnd, UINT type, HICON icon, ICONINFO *ret );
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 9a57c00..bd71999 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -436,13 +436,49 @@ void client_surface_present( struct client_surface *surface )
+     if ((hwnd = surface->hwnd))
+     {
+         client_surface_update_locked( surface );
+-        if (surface->offscreen) hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE );
++        /* A hidden window shows nothing; copying its stale content would paint over a
++         * visible sibling at the same place (Audition stacks its editors that way). */
++        if (surface->offscreen && is_window_visible( hwnd )) hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE );
+         surface->funcs->present( surface, hdc );
+         if (hdc) NtUserReleaseDC( hwnd, hdc );
+     }
+     pthread_mutex_unlock( &surfaces_lock );
+ }
+ 
++/* Re-copy offscreen client surfaces (Vulkan / OpenGL content presented into a child or
++ * layered window) to their toplevel. Their content is only copied at present time, so a
++ * later flush of the GDI window surface would otherwise overwrite it for good. */
++void present_offscreen_client_surfaces( HWND toplevel )
++{
++    static LONG presenting;
++    struct client_surface *surface, *surfaces[32];
++    unsigned int i, count = 0;
++
++    static int disabled = -1;
++
++    if (disabled < 0) disabled = getenv( "WINE_NO_OFFSCREEN_REPRESENT" ) != NULL;
++    if (disabled) return;
++    if (InterlockedCompareExchange( &presenting, 1, 0 )) return;
++
++    pthread_mutex_lock( &surfaces_lock );
++    LIST_FOR_EACH_ENTRY( surface, &client_surfaces, struct client_surface, entry )
++    {
++        if (!surface->hwnd || !surface->offscreen || surface->toplevel != toplevel) continue;
++        if (count == ARRAY_SIZE(surfaces)) break;
++        InterlockedIncrement( &surface->ref );
++        surfaces[count++] = surface;
++    }
++    pthread_mutex_unlock( &surfaces_lock );
++
++    for (i = 0; i < count; i++)
++    {
++        client_surface_present( surfaces[i] );
++        client_surface_release( surfaces[i] );
++    }
++
++    InterlockedExchange( &presenting, 0 );
++}
++
+ void client_surface_update( struct client_surface *surface )
+ {
+     pthread_mutex_lock( &surfaces_lock );

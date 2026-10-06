@@ -1,0 +1,32 @@
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index d100652..a36e02c 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -1847,6 +1847,15 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+     if (surface) create_info_host.surface = surface->obj.host.surface;
+     if (old_swapchain) create_info_host.oldSwapchain = old_swapchain->obj.host.swapchain;
+ 
++    /* An offscreen client window was kept at the old swapchain size (also after that swapchain
++     * is destroyed); give it the window size again first, or the host extents below would pin
++     * the new swapchain to the old size. */
++    if (surface)
++    {
++        surface->client->buffer_size.cx = surface->client->buffer_size.cy = 0;
++        client_surface_update( surface->client );
++    }
++
+     /* Windows allows client rect to be empty, but host Vulkan often doesn't, adjust extents back to the host capabilities */
+     res = instance->p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR( physical_device->host.physical_device, surface->obj.host.surface, &capabilities );
+     if (res) return res;
+diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+index dcc759f..b9f89d4 100644
+--- a/dlls/winex11.drv/init.c
++++ b/dlls/winex11.drv/init.c
+@@ -315,6 +315,7 @@ static void client_surface_update_geometry( HWND hwnd, struct x11drv_client_surf
+     TRACE( "client window %p/%lx, requesting position %d,%d size %d,%d mask %#x\n", hwnd,
+            surface->window, changes.x, changes.y, changes.width, changes.height, mask );
+     XConfigureWindow( gdi_display, surface->window, mask, &changes );
++    XFlush( gdi_display );  /* the host Vulkan driver may read the size on another connection */
+ }
+ 
+ static void client_surface_update_offscreen( HWND hwnd, struct x11drv_client_surface *surface )

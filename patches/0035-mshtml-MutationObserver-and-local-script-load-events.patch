@@ -1,0 +1,915 @@
+diff --git a/dlls/mshtml/htmlnode.c b/dlls/mshtml/htmlnode.c
+index b82ab57..7a43f19 100644
+--- a/dlls/mshtml/htmlnode.c
++++ b/dlls/mshtml/htmlnode.c
+@@ -659,6 +659,7 @@ static HRESULT WINAPI HTMLDOMNode_put_nodeValue(IHTMLDOMNode *iface, VARIANT v)
+         nsAString_InitDepend(&val_str, V_BSTR(&v));
+         nsIDOMNode_SetNodeValue(This->nsnode, &val_str);
+         nsAString_Finish(&val_str);
++        mutation_observer_char_data_set(This->nsnode);
+ 
+         return S_OK;
+     }
+@@ -837,6 +838,11 @@ static HTMLDOMNode *get_node_obj(IHTMLDOMNode *iface)
+     return ret;
+ }
+ 
++HTMLDOMNode *unsafe_node_from_IHTMLDOMNode(IHTMLDOMNode *iface)
++{
++    return get_node_obj(iface);
++}
++
+ static inline HTMLDOMNode *impl_from_IHTMLDOMNode2(IHTMLDOMNode2 *iface)
+ {
+     return CONTAINING_RECORD(iface, HTMLDOMNode, IHTMLDOMNode2_iface);
+diff --git a/dlls/mshtml/htmltextnode.c b/dlls/mshtml/htmltextnode.c
+index 3bb5cec..0e411a7 100644
+--- a/dlls/mshtml/htmltextnode.c
++++ b/dlls/mshtml/htmltextnode.c
+@@ -80,6 +80,8 @@ static HRESULT WINAPI CharacterData_put_data(IWineHTMLCharacterData *iface, BSTR
+     nsAString_InitDepend(&nsstr, v);
+     nsres = nsIDOMCharacterData_SetData(This->nschardata, &nsstr);
+     nsAString_Finish(&nsstr);
++    if(NS_SUCCEEDED(nsres))
++        mutation_observer_char_data_set(This->node->nsnode);
+     return NS_SUCCEEDED(nsres) ? S_OK : E_FAIL;
+ }
+ 
+@@ -166,6 +168,7 @@ static HRESULT WINAPI CharacterData_appendData(IWineHTMLCharacterData *iface, BS
+     nsAString_Finish(&nsstr);
+     if(NS_FAILED(nsres))
+         return map_nsresult(nsres);
++    mutation_observer_char_data_set(This->node->nsnode);
+ 
+     return S_OK;
+ }
+diff --git a/dlls/mshtml/mshtml_private.h b/dlls/mshtml/mshtml_private.h
+index e5236ed..cd47eb5 100644
+--- a/dlls/mshtml/mshtml_private.h
++++ b/dlls/mshtml/mshtml_private.h
+@@ -1448,6 +1448,9 @@ HRESULT HTMLElement_get_attr_col(HTMLDOMNode*,HTMLAttributeCollection**);
+ void HTMLElement_init_dispex_info(dispex_data_t*,compat_mode_t);
+ 
+ HRESULT get_node(nsIDOMNode*,BOOL,HTMLDOMNode**);
++HTMLDOMNode *unsafe_node_from_IHTMLDOMNode(IHTMLDOMNode*);
++void mutation_observer_char_data_set(nsIDOMNode*);
++void start_pending_script_loads(HTMLInnerWindow*);
+ HRESULT get_element(nsIDOMElement*,HTMLElement**);
+ HRESULT get_document_node(nsIDOMDocument*,HTMLDocumentNode**);
+ 
+diff --git a/dlls/mshtml/mutation.c b/dlls/mshtml/mutation.c
+index 91627dc..83249cb 100644
+--- a/dlls/mshtml/mutation.c
++++ b/dlls/mshtml/mutation.c
+@@ -816,6 +816,14 @@ static nsrefcnt NSAPI nsDocumentObserver_Release(nsIDocumentObserver *iface)
+     return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
+ }
+ 
++#define OBSERVE_CHILD_LIST       0x01
++#define OBSERVE_ATTRIBUTES       0x02
++#define OBSERVE_CHARACTER_DATA   0x04
++#define OBSERVE_SUBTREE          0x08
++
++static void mutation_observer_content_changed(DWORD type, void *container, void *child,
++                                              BOOL siblings, BOOL removed, const WCHAR *attr_name);
++
+ static void NSAPI nsDocumentObserver_CharacterDataWillChange(nsIDocumentObserver *iface,
+         nsIDocument *aDocument, nsIContent *aContent, void /*CharacterDataChangeInfo*/ *aInfo)
+ {
+@@ -824,6 +832,7 @@ static void NSAPI nsDocumentObserver_CharacterDataWillChange(nsIDocumentObserver
+ static void NSAPI nsDocumentObserver_CharacterDataChanged(nsIDocumentObserver *iface,
+         nsIDocument *aDocument, nsIContent *aContent, void /*CharacterDataChangeInfo*/ *aInfo)
+ {
++    mutation_observer_content_changed(OBSERVE_CHARACTER_DATA, aContent, NULL, FALSE, FALSE, NULL);
+ }
+ 
+ static void NSAPI nsDocumentObserver_AttributeWillChange(nsIDocumentObserver *iface, nsIDocument *aDocument,
+@@ -851,6 +860,7 @@ static void NSAPI nsDocumentObserver_AttributeChanged(nsIDocumentObserver *iface
+     assert(nsres == NS_OK);
+ 
+     event_attr_changed(This, elem, name);
++    mutation_observer_content_changed(OBSERVE_ATTRIBUTES, elem, NULL, FALSE, FALSE, name);
+     nsAString_Finish(&name_str);
+     nsIDOMElement_Release(elem);
+ }
+@@ -868,17 +878,23 @@ static void NSAPI nsDocumentObserver_AttributeSetToCurrentValue(nsIDocumentObser
+ static void NSAPI nsDocumentObserver_ContentAppended(nsIDocumentObserver *iface, nsIDocument *aDocument,
+         nsIContent *aContainer, nsIContent *aFirstNewContent, LONG aNewIndexInContainer)
+ {
++    mutation_observer_content_changed(OBSERVE_CHILD_LIST, aContainer ? (void*)aContainer : (void*)aDocument,
++                                      aFirstNewContent, TRUE, FALSE, NULL);
+ }
+ 
+ static void NSAPI nsDocumentObserver_ContentInserted(nsIDocumentObserver *iface, nsIDocument *aDocument,
+         nsIContent *aContainer, nsIContent *aChild, LONG aIndexInContainer)
+ {
++    mutation_observer_content_changed(OBSERVE_CHILD_LIST, aContainer ? (void*)aContainer : (void*)aDocument,
++                                      aChild, FALSE, FALSE, NULL);
+ }
+ 
+ static void NSAPI nsDocumentObserver_ContentRemoved(nsIDocumentObserver *iface, nsIDocument *aDocument,
+         nsIContent *aContainer, nsIContent *aChild, LONG aIndexInContainer,
+         nsIContent *aProviousSibling)
+ {
++    mutation_observer_content_changed(OBSERVE_CHILD_LIST, aContainer ? (void*)aContainer : (void*)aDocument,
++                                      aChild, FALSE, TRUE, NULL);
+ }
+ 
+ static void NSAPI nsDocumentObserver_NodeWillBeDestroyed(nsIDocumentObserver *iface, const nsINode *aNode)
+@@ -1178,13 +1194,42 @@ void init_mutation(nsIComponentManager *component_manager)
+         ERR("Could not create nsIContentUtils instance: %08lx\n", nsres);
+ }
+ 
++/* MutationObserver: script changes and Gecko's document notifications produce records
++ * that are delivered asynchronously (through the window's task queue) to the callback.
++ * Polyfills such as core-js schedule their Promise jobs this way, by observing a detached
++ * text node for characterData changes. */
++
++struct observation {
++    nsIDOMNode *target;
++    DWORD flags;
++};
++
++struct mutation_record {
++    struct list entry;
++    DWORD type; /* one of OBSERVE_CHILD_LIST, OBSERVE_ATTRIBUTES, OBSERVE_CHARACTER_DATA */
++    nsIDOMNode *target;
++    BSTR attr_name;
++    nsIDOMNode **added;
++    UINT added_cnt;
++    nsIDOMNode *removed;
++};
++
+ struct mutation_observer {
+     IWineMSHTMLMutationObserver IWineMSHTMLMutationObserver_iface;
+ 
+     DispatchEx dispex;
+     IDispatch *callback;
++
++    HTMLInnerWindow *window;
++    struct observation *observations;
++    UINT observation_cnt;
++    struct list records;
++    struct list entry;      /* in active_observers while observing */
++    BOOL task_pending;
+ };
+ 
++static struct list active_observers = LIST_INIT(active_observers);
++
+ static inline struct mutation_observer *impl_from_IWineMSHTMLMutationObserver(IWineMSHTMLMutationObserver *iface)
+ {
+     return CONTAINING_RECORD(iface, struct mutation_observer, IWineMSHTMLMutationObserver_iface);
+@@ -1193,12 +1238,426 @@ static inline struct mutation_observer *impl_from_IWineMSHTMLMutationObserver(IW
+ DISPEX_IDISPATCH_IMPL(MutationObserver, IWineMSHTMLMutationObserver,
+                       impl_from_IWineMSHTMLMutationObserver(iface)->dispex)
+ 
++static void free_mutation_record(struct mutation_record *record)
++{
++    UINT i;
++
++    nsIDOMNode_Release(record->target);
++    SysFreeString(record->attr_name);
++    for(i = 0; i < record->added_cnt; i++)
++        nsIDOMNode_Release(record->added[i]);
++    free(record->added);
++    if(record->removed)
++        nsIDOMNode_Release(record->removed);
++    free(record);
++}
++
++static void clear_mutation_records(struct mutation_observer *This)
++{
++    struct mutation_record *record, *next;
++
++    LIST_FOR_EACH_ENTRY_SAFE(record, next, &This->records, struct mutation_record, entry) {
++        list_remove(&record->entry);
++        free_mutation_record(record);
++    }
++}
++
++static void clear_observations(struct mutation_observer *This)
++{
++    UINT i;
++
++    for(i = 0; i < This->observation_cnt; i++)
++        nsIDOMNode_Release(This->observations[i].target);
++    free(This->observations);
++    This->observations = NULL;
++    if(This->observation_cnt) {
++        This->observation_cnt = 0;
++        list_remove(&This->entry);
++        /* drop the reference held while observing */
++        IWineMSHTMLMutationObserver_Release(&This->IWineMSHTMLMutationObserver_iface);
++    }
++}
++
++static HRESULT create_js_array(HTMLInnerWindow *window, IDispatchEx **ret)
++{
++    IDispatchEx *global = (IDispatchEx*)&window->event_target.dispex.IWineJSDispatchHost_iface;
++    DISPPARAMS dp = { 0 };
++    BSTR name;
++    VARIANT v;
++    DISPID id;
++    HRESULT hres;
++
++    if(!(name = SysAllocString(L"Array")))
++        return E_OUTOFMEMORY;
++    hres = IDispatchEx_GetDispID(global, name, fdexNameCaseSensitive, &id);
++    SysFreeString(name);
++    if(FAILED(hres))
++        return hres;
++
++    V_VT(&v) = VT_EMPTY;
++    hres = IDispatchEx_InvokeEx(global, id, LOCALE_NEUTRAL, DISPATCH_CONSTRUCT, &dp, &v, NULL, NULL);
++    if(FAILED(hres))
++        return hres;
++    if(V_VT(&v) != VT_DISPATCH || !V_DISPATCH(&v)) {
++        VariantClear(&v);
++        return E_FAIL;
++    }
++    hres = IDispatch_QueryInterface(V_DISPATCH(&v), &IID_IDispatchEx, (void**)ret);
++    VariantClear(&v);
++    return hres;
++}
++
++static HRESULT js_array_push(IDispatchEx *array, VARIANT *v)
++{
++    DISPPARAMS dp = { v, NULL, 1, 0 };
++    BSTR name;
++    DISPID id;
++    HRESULT hres;
++
++    if(!(name = SysAllocString(L"push")))
++        return E_OUTOFMEMORY;
++    hres = IDispatchEx_GetDispID(array, name, fdexNameCaseSensitive, &id);
++    SysFreeString(name);
++    if(SUCCEEDED(hres))
++        hres = IDispatchEx_InvokeEx(array, id, LOCALE_NEUTRAL, DISPATCH_METHOD, &dp, NULL, NULL, NULL);
++    return hres;
++}
++
++static void node_to_variant(nsIDOMNode *nsnode, VARIANT *v)
++{
++    HTMLDOMNode *node;
++
++    V_VT(v) = VT_NULL;
++    if(nsnode && SUCCEEDED(get_node(nsnode, TRUE, &node))) {
++        V_VT(v) = VT_DISPATCH;
++        V_DISPATCH(v) = (IDispatch*)&node->IHTMLDOMNode_iface;
++    }
++}
++
++static HRESULT define_record_prop(IWineJSDispatch *obj, const WCHAR *name, VARIANT *v)
++{
++    HRESULT hres = IWineJSDispatch_DefineProperty(obj, name, PROPF_WRITABLE | PROPF_ENUMERABLE | PROPF_CONFIGURABLE, v);
++    VariantClear(v);
++    return hres;
++}
++
++static HRESULT create_node_array(HTMLInnerWindow *window, nsIDOMNode **nodes, UINT cnt, VARIANT *ret)
++{
++    IDispatchEx *array;
++    VARIANT v;
++    HRESULT hres;
++    UINT i;
++
++    if(FAILED(hres = create_js_array(window, &array)))
++        return hres;
++    for(i = 0; i < cnt && SUCCEEDED(hres); i++) {
++        node_to_variant(nodes[i], &v);
++        hres = js_array_push(array, &v);
++        VariantClear(&v);
++    }
++    V_VT(ret) = VT_DISPATCH;
++    V_DISPATCH(ret) = (IDispatch*)array;
++    return hres;
++}
++
++static HRESULT create_record_object(HTMLInnerWindow *window, struct mutation_record *record, VARIANT *ret)
++{
++    static const WCHAR *type_names[] = { NULL, L"childList", L"attributes", NULL, L"characterData" };
++    IWineJSDispatch *obj;
++    VARIANT v;
++    HRESULT hres;
++
++    hres = IWineJScript_CreateObject(window->jscript, &obj);
++    if(FAILED(hres))
++        return hres;
++
++    V_VT(&v) = VT_BSTR;
++    V_BSTR(&v) = SysAllocString(type_names[record->type]);
++    hres = define_record_prop(obj, L"type", &v);
++    if(SUCCEEDED(hres)) {
++        node_to_variant(record->target, &v);
++        hres = define_record_prop(obj, L"target", &v);
++    }
++    if(SUCCEEDED(hres)) {
++        if(record->attr_name) {
++            V_VT(&v) = VT_BSTR;
++            V_BSTR(&v) = SysAllocString(record->attr_name);
++        }else {
++            V_VT(&v) = VT_NULL;
++        }
++        hres = define_record_prop(obj, L"attributeName", &v);
++    }
++    if(SUCCEEDED(hres)) {
++        V_VT(&v) = VT_NULL;
++        hres = define_record_prop(obj, L"attributeNamespace", &v);
++    }
++    if(SUCCEEDED(hres)) {
++        V_VT(&v) = VT_NULL;
++        hres = define_record_prop(obj, L"oldValue", &v);
++    }
++    if(SUCCEEDED(hres) && SUCCEEDED(hres = create_node_array(window, record->added, record->added_cnt, &v)))
++        hres = define_record_prop(obj, L"addedNodes", &v);
++    if(SUCCEEDED(hres) && SUCCEEDED(hres = create_node_array(window, &record->removed, record->removed ? 1 : 0, &v)))
++        hres = define_record_prop(obj, L"removedNodes", &v);
++    if(SUCCEEDED(hres)) {
++        V_VT(&v) = VT_NULL;
++        hres = define_record_prop(obj, L"previousSibling", &v);
++    }
++    if(SUCCEEDED(hres)) {
++        V_VT(&v) = VT_NULL;
++        hres = define_record_prop(obj, L"nextSibling", &v);
++    }
++    if(FAILED(hres)) {
++        IWineJSDispatch_Release(obj);
++        return hres;
++    }
++
++    V_VT(ret) = VT_DISPATCH;
++    V_DISPATCH(ret) = (IDispatch*)obj;
++    return S_OK;
++}
++
++/* Turns the pending records into a JS array (empty records are taken by the caller). */
++static HRESULT take_records(struct mutation_observer *This, VARIANT *ret)
++{
++    struct mutation_record *record, *next;
++    IDispatchEx *array;
++    VARIANT v;
++    HRESULT hres;
++
++    V_VT(ret) = VT_NULL;
++    if(!This->window || !This->window->jscript) {
++        clear_mutation_records(This);
++        return S_OK;
++    }
++
++    if(FAILED(hres = create_js_array(This->window, &array))) {
++        clear_mutation_records(This);
++        return hres;
++    }
++
++    LIST_FOR_EACH_ENTRY_SAFE(record, next, &This->records, struct mutation_record, entry) {
++        list_remove(&record->entry);
++        if(SUCCEEDED(create_record_object(This->window, record, &v))) {
++            js_array_push(array, &v);
++            VariantClear(&v);
++        }
++        free_mutation_record(record);
++    }
++
++    V_VT(ret) = VT_DISPATCH;
++    V_DISPATCH(ret) = (IDispatch*)array;
++    return S_OK;
++}
++
++struct mutation_task {
++    task_t header;
++    struct mutation_observer *observer;
++};
++
++static void mutation_task_proc(task_t *_task)
++{
++    struct mutation_task *task = (struct mutation_task*)_task;
++    struct mutation_observer *This = task->observer;
++    VARIANT args[2], res;
++    DISPPARAMS dp = { args, NULL, 2, 0 };
++
++    This->task_pending = FALSE;
++    if(list_empty(&This->records) || !This->callback)
++        return;
++
++    TRACE("(%p) delivering records\n", This);
++
++    take_records(This, &args[1]);
++    V_VT(&args[0]) = VT_DISPATCH;
++    V_DISPATCH(&args[0]) = (IDispatch*)&This->IWineMSHTMLMutationObserver_iface;
++    V_VT(&res) = VT_EMPTY;
++    call_disp_func(This->callback, &dp, &res);
++    VariantClear(&res);
++    VariantClear(&args[1]);
++}
++
++static void mutation_task_destr(task_t *_task)
++{
++    struct mutation_task *task = (struct mutation_task*)_task;
++    IWineMSHTMLMutationObserver_Release(&task->observer->IWineMSHTMLMutationObserver_iface);
++}
++
++static void queue_mutation_record(struct mutation_observer *This, DWORD type, nsIDOMNode *target,
++                                  const WCHAR *attr_name, nsIDOMNode *added, BOOL added_siblings,
++                                  nsIDOMNode *removed)
++{
++    struct mutation_record *record;
++    struct mutation_task *task;
++    nsIDOMNode *iter, *next;
++
++    if(!(record = calloc(1, sizeof(*record))))
++        return;
++    record->type = type;
++    nsIDOMNode_AddRef(record->target = target);
++    if(attr_name)
++        record->attr_name = SysAllocString(attr_name);
++    for(iter = added; iter; iter = next) {
++        nsIDOMNode **tmp = realloc(record->added, (record->added_cnt + 1) * sizeof(*tmp));
++        if(!tmp)
++            break;
++        record->added = tmp;
++        nsIDOMNode_AddRef(record->added[record->added_cnt++] = iter);
++        next = NULL;
++        if(added_siblings)
++            nsIDOMNode_GetNextSibling(iter, &next);
++        if(iter != added)
++            nsIDOMNode_Release(iter);
++    }
++    if(removed)
++        nsIDOMNode_AddRef(record->removed = removed);
++    list_add_tail(&This->records, &record->entry);
++
++    if(This->task_pending || !This->window)
++        return;
++    if(!(task = malloc(sizeof(*task))))
++        return;
++    IWineMSHTMLMutationObserver_AddRef(&This->IWineMSHTMLMutationObserver_iface);
++    task->observer = This;
++    if(SUCCEEDED(push_task(&task->header, mutation_task_proc, mutation_task_destr, This->window->task_magic)))
++        This->task_pending = TRUE;
++}
++
++static BOOL node_in_scope(nsIDOMNode *node, nsIDOMNode *target, BOOL subtree)
++{
++    nsIDOMNode *iter, *parent;
++    BOOL ret = FALSE;
++
++    if(node == target)
++        return TRUE;
++    if(!subtree)
++        return FALSE;
++
++    nsIDOMNode_AddRef(iter = node);
++    while(NS_SUCCEEDED(nsIDOMNode_GetParentNode(iter, &parent)) && parent) {
++        nsIDOMNode_Release(iter);
++        iter = parent;
++        if(iter == target) {
++            ret = TRUE;
++            break;
++        }
++    }
++    nsIDOMNode_Release(iter);
++    return ret;
++}
++
++static void notify_mutation(DWORD type, nsIDOMNode *target, const WCHAR *attr_name,
++                            nsIDOMNode *added, BOOL added_siblings, nsIDOMNode *removed)
++{
++    struct mutation_observer *observer, *next;
++    UINT i;
++
++    LIST_FOR_EACH_ENTRY_SAFE(observer, next, &active_observers, struct mutation_observer, entry) {
++        for(i = 0; i < observer->observation_cnt; i++) {
++            if(!(observer->observations[i].flags & type))
++                continue;
++            if(node_in_scope(target, observer->observations[i].target,
++                             !!(observer->observations[i].flags & OBSERVE_SUBTREE))) {
++                queue_mutation_record(observer, type, target, attr_name, added, added_siblings, removed);
++                break;
++            }
++        }
++    }
++}
++
++static nsIDOMNode *dom_node_from_content(void *content)
++{
++    nsIDOMNode *node = NULL;
++
++    if(content && NS_FAILED(nsISupports_QueryInterface((nsISupports*)content, &IID_nsIDOMNode, (void**)&node)))
++        node = NULL;
++    return node;
++}
++
++/* Gecko reports changes only for nodes that are part of a document; script changes to
++ * detached character data come through here. */
++void mutation_observer_char_data_set(nsIDOMNode *nsnode)
++{
++    nsIDOMNode *iter, *parent;
++    UINT16 type = 0;
++
++    if(list_empty(&active_observers) || !nsnode)
++        return;
++
++    nsIDOMNode_AddRef(iter = nsnode);
++    while(NS_SUCCEEDED(nsIDOMNode_GetParentNode(iter, &parent)) && parent) {
++        nsIDOMNode_Release(iter);
++        iter = parent;
++    }
++    nsIDOMNode_GetNodeType(iter, &type);
++    nsIDOMNode_Release(iter);
++    if(type == DOCUMENT_NODE)
++        return;
++
++    notify_mutation(OBSERVE_CHARACTER_DATA, nsnode, NULL, NULL, FALSE, NULL);
++}
++
++static void mutation_observer_content_changed(DWORD type, void *container, void *child,
++                                              BOOL siblings, BOOL removed, const WCHAR *attr_name)
++{
++    nsIDOMNode *target, *node;
++
++    if(list_empty(&active_observers))
++        return;
++    if(!(target = dom_node_from_content(container)))
++        return;
++    node = dom_node_from_content(child);
++    if(removed)
++        notify_mutation(type, target, attr_name, NULL, FALSE, node);
++    else
++        notify_mutation(type, target, attr_name, node, siblings, NULL);
++    if(node)
++        nsIDOMNode_Release(node);
++    nsIDOMNode_Release(target);
++}
++
+ static HRESULT WINAPI MutationObserver_disconnect(IWineMSHTMLMutationObserver *iface)
+ {
+     struct mutation_observer *This = impl_from_IWineMSHTMLMutationObserver(iface);
+ 
+-    FIXME("(%p), stub\n", This);
++    TRACE("(%p)\n", This);
++
++    clear_mutation_records(This);
++    clear_observations(This);
++    return S_OK;
++}
++
++static HRESULT get_option(IDispatch *options, const WCHAR *name, BOOL *present, BOOL *value)
++{
++    IDispatchEx *dispex;
++    DISPPARAMS dp = { 0 };
++    VARIANT v;
++    DISPID id;
++    BSTR str;
++    HRESULT hres;
++
++    *present = *value = FALSE;
++    if(!options)
++        return S_OK;
++    if(FAILED(IDispatch_QueryInterface(options, &IID_IDispatchEx, (void**)&dispex)))
++        return S_OK;
+ 
++    str = SysAllocString(name);
++    hres = IDispatchEx_GetDispID(dispex, str, fdexNameCaseSensitive, &id);
++    SysFreeString(str);
++    if(SUCCEEDED(hres)) {
++        V_VT(&v) = VT_EMPTY;
++        hres = IDispatchEx_InvokeEx(dispex, id, LOCALE_NEUTRAL, DISPATCH_PROPERTYGET, &dp, &v, NULL, NULL);
++        if(SUCCEEDED(hres) && V_VT(&v) != VT_EMPTY) {
++            *present = TRUE;
++            if(SUCCEEDED(VariantChangeType(&v, &v, 0, VT_BOOL)))
++                *value = V_BOOL(&v) != VARIANT_FALSE;
++            else
++                *value = TRUE; /* e.g. attributeFilter arrays */
++        }
++        VariantClear(&v);
++    }
++    IDispatchEx_Release(dispex);
+     return S_OK;
+ }
+ 
+@@ -1206,19 +1665,72 @@ static HRESULT WINAPI MutationObserver_observe(IWineMSHTMLMutationObserver *ifac
+                                                IDispatch *options)
+ {
+     struct mutation_observer *This = impl_from_IWineMSHTMLMutationObserver(iface);
++    BOOL present, value, attr_old_present, attr_filter_present, cdata_old_present;
++    struct observation *tmp;
++    HTMLDOMNode *node;
++    DWORD flags = 0;
++    UINT i;
++
++    TRACE("(%p)->(%p %p)\n", This, target, options);
++
++    if(!target || !(node = unsafe_node_from_IHTMLDOMNode(target)))
++        return E_INVALIDARG;
++
++    get_option(options, L"childList", &present, &value);
++    if(value) flags |= OBSERVE_CHILD_LIST;
++    get_option(options, L"subtree", &present, &value);
++    if(value) flags |= OBSERVE_SUBTREE;
++    get_option(options, L"attributeOldValue", &attr_old_present, &value);
++    get_option(options, L"attributeFilter", &attr_filter_present, &value);
++    get_option(options, L"attributes", &present, &value);
++    if(value || (!present && (attr_old_present || attr_filter_present))) flags |= OBSERVE_ATTRIBUTES;
++    get_option(options, L"characterDataOldValue", &cdata_old_present, &value);
++    get_option(options, L"characterData", &present, &value);
++    if(value || (!present && cdata_old_present)) flags |= OBSERVE_CHARACTER_DATA;
++
++    if(!(flags & (OBSERVE_CHILD_LIST | OBSERVE_ATTRIBUTES | OBSERVE_CHARACTER_DATA))) {
++        node_release(node);
++        return E_INVALIDARG; /* TypeError */
++    }
++
++    for(i = 0; i < This->observation_cnt; i++) {
++        if(This->observations[i].target == node->nsnode) {
++            This->observations[i].flags = flags;
++            node_release(node);
++            return S_OK;
++        }
++    }
+ 
+-    FIXME("(%p)->(%p %p), stub\n", This, target, options);
++    if(!(tmp = realloc(This->observations, (This->observation_cnt + 1) * sizeof(*tmp)))) {
++        node_release(node);
++        return E_OUTOFMEMORY;
++    }
++    This->observations = tmp;
++    nsIDOMNode_AddRef(tmp[This->observation_cnt].target = node->nsnode);
++    tmp[This->observation_cnt].flags = flags;
++    node_release(node);
+ 
++    if(!This->observation_cnt++) {
++        /* keep the observer alive while it observes, as the spec requires */
++        IWineMSHTMLMutationObserver_AddRef(&This->IWineMSHTMLMutationObserver_iface);
++        list_add_tail(&active_observers, &This->entry);
++    }
+     return S_OK;
+ }
+ 
+ static HRESULT WINAPI MutationObserver_takeRecords(IWineMSHTMLMutationObserver *iface, IDispatch **ret)
+ {
+     struct mutation_observer *This = impl_from_IWineMSHTMLMutationObserver(iface);
++    VARIANT v;
++    HRESULT hres;
+ 
+-    FIXME("(%p)->(%p), stub\n", This, ret);
++    TRACE("(%p)->(%p)\n", This, ret);
+ 
+-    return E_NOTIMPL;
++    hres = take_records(This, &v);
++    if(FAILED(hres))
++        return hres;
++    *ret = V_VT(&v) == VT_DISPATCH ? V_DISPATCH(&v) : NULL;
++    return S_OK;
+ }
+ 
+ static const IWineMSHTMLMutationObserverVtbl WineMSHTMLMutationObserverVtbl = {
+@@ -1260,11 +1772,21 @@ static void mutation_observer_unlink(DispatchEx *dispex)
+ {
+     struct mutation_observer *This = mutation_observer_from_DispatchEx(dispex);
+     unlink_ref(&This->callback);
++    clear_mutation_records(This);
++    if(This->window) {
++        HTMLInnerWindow *window = This->window;
++        This->window = NULL;
++        IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
++    }
+ }
+ 
+ static void mutation_observer_destructor(DispatchEx *dispex)
+ {
+     struct mutation_observer *This = mutation_observer_from_DispatchEx(dispex);
++    clear_mutation_records(This);
++    free(This->observations);
++    if(This->window)
++        IHTMLWindow2_Release(&This->window->base.IHTMLWindow2_iface);
+     free(This);
+ }
+ 
+@@ -1290,7 +1812,7 @@ dispex_static_data_t MutationObserver_dispex = {
+     .min_compat_mode  = COMPAT_MODE_IE11,
+ };
+ 
+-static HRESULT create_mutation_observer(DispatchEx *owner, IDispatch *callback,
++static HRESULT create_mutation_observer(DispatchEx *owner, HTMLInnerWindow *window, IDispatch *callback,
+                                         IWineMSHTMLMutationObserver **ret)
+ {
+     struct mutation_observer *obj;
+@@ -1309,6 +1831,9 @@ static HRESULT create_mutation_observer(DispatchEx *owner, IDispatch *callback,
+ 
+     IDispatch_AddRef(callback);
+     obj->callback = callback;
++    list_init(&obj->records);
++    if((obj->window = window))
++        IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+     *ret = &obj->IWineMSHTMLMutationObserver_iface;
+     return S_OK;
+ }
+@@ -1349,7 +1874,7 @@ static HRESULT mutation_observer_ctor_value(DispatchEx *dispex, LCID lcid,
+     if (!res)
+         return S_OK;
+ 
+-    hres = create_mutation_observer(&This->dispex, V_DISPATCH(callback), &mutation_observer);
++    hres = create_mutation_observer(&This->dispex, This->window, V_DISPATCH(callback), &mutation_observer);
+     if (FAILED(hres))
+         return hres;
+ 
+diff --git a/dlls/mshtml/nsevents.c b/dlls/mshtml/nsevents.c
+index 3fbc1cf..d808c08 100644
+--- a/dlls/mshtml/nsevents.c
++++ b/dlls/mshtml/nsevents.c
+@@ -330,6 +330,7 @@ static nsresult handle_load(HTMLDocumentNode *doc, nsIDOMEvent *event)
+     doc->window->dom_complete_time = get_time_stamp();
+     if(!is_detached_window(doc->window))
+         set_ready_state(doc->window->base.outer_window, READYSTATE_COMPLETE);
++    start_pending_script_loads(doc->window);
+ 
+     if(doc_obj) {
+         if(doc_obj->view_sink)
+diff --git a/dlls/mshtml/script.c b/dlls/mshtml/script.c
+index 786c499..fb064fc 100644
+--- a/dlls/mshtml/script.c
++++ b/dlls/mshtml/script.c
+@@ -879,17 +879,24 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
+ typedef struct {
+     event_task_t header;
+     HTMLScriptElement *elem;
++    BOOL loaded;  /* fire the 'loaded' notification even if the state moved on since */
+ } fire_readystatechange_task_t;
+ 
+ static void fire_readystatechange_proc(event_task_t *_task)
+ {
+     fire_readystatechange_task_t *task = (fire_readystatechange_task_t*)_task;
++    READYSTATE readystate;
+ 
+     if(!task->elem->pending_readystatechange_event)
+         return;
+ 
+     task->elem->pending_readystatechange_event = FALSE;
++    readystate = task->elem->readystate;
++    if(task->loaded)
++        task->elem->readystate = READYSTATE_LOADED;
+     dispatch_script_readystatechange_event(task->elem);
++    if(task->loaded)
++        task->elem->readystate = readystate;
+ }
+ 
+ static void fire_readystatechange_task_destr(event_task_t *_task)
+@@ -899,6 +906,28 @@ static void fire_readystatechange_task_destr(event_task_t *_task)
+     IHTMLScriptElement_Release(&task->elem->IHTMLScriptElement_iface);
+ }
+ 
++static void queue_script_readystatechange_event(HTMLScriptElement *script_elem, BOOL loaded)
++{
++    fire_readystatechange_task_t *task;
++    HRESULT hres;
++
++    if(script_elem->pending_readystatechange_event)
++        return;
++
++    task = malloc(sizeof(*task));
++    if(!task)
++        return;
++
++    IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
++    task->elem = script_elem;
++    task->loaded = loaded;
++
++    hres = push_event_task(&task->header, script_elem->element.node.doc->window, fire_readystatechange_proc,
++            fire_readystatechange_task_destr, script_elem->element.node.doc->window->task_magic);
++    if(SUCCEEDED(hres))
++        script_elem->pending_readystatechange_event = TRUE;
++}
++
+ static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTATE readystate)
+ {
+     script_elem->readystate = readystate;
+@@ -909,23 +938,7 @@ static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTAT
+ 
+     if(readystate != READYSTATE_INTERACTIVE) {
+         if(!script_elem->element.node.doc->window->parser_callback_cnt) {
+-            fire_readystatechange_task_t *task;
+-            HRESULT hres;
+-
+-            if(script_elem->pending_readystatechange_event)
+-                return;
+-
+-            task = malloc(sizeof(*task));
+-            if(!task)
+-                return;
+-
+-            IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
+-            task->elem = script_elem;
+-
+-            hres = push_event_task(&task->header, script_elem->element.node.doc->window, fire_readystatechange_proc,
+-                    fire_readystatechange_task_destr, script_elem->element.node.doc->window->task_magic);
+-            if(SUCCEEDED(hres))
+-                script_elem->pending_readystatechange_event = TRUE;
++            queue_script_readystatechange_event(script_elem, FALSE);
+         }else {
+             script_elem->pending_readystatechange_event = FALSE;
+             dispatch_script_readystatechange_event(script_elem);
+@@ -1143,8 +1156,16 @@ static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
+     assert(FAILED(result) || This->script_elem->binding == &This->bsc);
+     This->script_elem->binding = NULL;
+ 
+-    if(This->script_elem->readystate == READYSTATE_LOADING)
++    if(This->script_elem->readystate == READYSTATE_LOADING) {
+         set_script_elem_readystate(This->script_elem, READYSTATE_LOADED);
++    }else if(This->script_elem->readystate < READYSTATE_LOADED && SUCCEEDED(result)) {
++        /* Scripts from other protocols (file://) never enter the 'loading' state and may
++         * finish synchronously, while the inserting script still runs. Their load event
++         * never fired, and pages that chain script loads through onload (Creative Cloud's
++         * local host page) stalled. Fire it from a task, after the script has run. */
++        This->script_elem->readystate = READYSTATE_LOADED;
++        queue_script_readystatechange_event(This->script_elem, TRUE);
++    }
+ 
+     if(SUCCEEDED(result)) {
+         script_file_available(This);
+@@ -1225,6 +1246,62 @@ static const BSCallbackVtbl ScriptBSCVtbl = {
+ };
+ 
+ 
++/* Asynchronous scripts from local files load synchronously here, while IE loads them in
++ * the background: hosts such as Adobe Desktop Service inject their native bridge object
++ * into the window once the document is complete, and the page's script chain (each script
++ * started from the previous one's onload) must not have finished before that. Such loads
++ * wait until the window's document is complete. */
++struct pending_script_load {
++    struct list entry;
++    HTMLInnerWindow *window;
++    HTMLScriptElement *elem;
++    WCHAR *src;
++};
++
++static struct list pending_script_loads = LIST_INIT(pending_script_loads);
++
++static void pending_script_loads_proc(event_task_t *task)
++{
++    struct pending_script_load *load, *next;
++    struct list loads = LIST_INIT(loads);
++
++    LIST_FOR_EACH_ENTRY_SAFE(load, next, &pending_script_loads, struct pending_script_load, entry) {
++        if(load->window != task->window)
++            continue;
++        list_remove(&load->entry);
++        list_add_tail(&loads, &load->entry);
++    }
++
++    LIST_FOR_EACH_ENTRY_SAFE(load, next, &loads, struct pending_script_load, entry) {
++        list_remove(&load->entry);
++        TRACE("starting deferred load of %s\n", debugstr_w(load->src));
++        if(load->elem->element.node.doc && load->elem->element.node.doc->window == load->window)
++            load_script(load->elem, load->src, TRUE);
++        IHTMLScriptElement_Release(&load->elem->IHTMLScriptElement_iface);
++        IHTMLWindow2_Release(&load->window->base.IHTMLWindow2_iface);
++        free(load->src);
++        free(load);
++    }
++}
++
++static void pending_script_loads_destr(event_task_t *task)
++{
++}
++
++void start_pending_script_loads(HTMLInnerWindow *window)
++{
++    struct pending_script_load *load;
++    event_task_t *task;
++
++    LIST_FOR_EACH_ENTRY(load, &pending_script_loads, struct pending_script_load, entry) {
++        if(load->window != window)
++            continue;
++        if((task = malloc(sizeof(*task))))
++            push_event_task(task, window, pending_script_loads_proc, pending_script_loads_destr, window->task_magic);
++        return;
++    }
++}
++
+ HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async)
+ {
+     HTMLInnerWindow *window;
+@@ -1245,6 +1322,23 @@ HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async
+         return E_UNEXPECTED;
+     }
+ 
++    if(async && !wcsnicmp(src, L"file:", 5) && window->base.outer_window &&
++       window->base.outer_window->base.inner_window == window &&
++       window->base.outer_window->readystate != READYSTATE_COMPLETE) {
++        struct pending_script_load *load;
++
++        if((load = calloc(1, sizeof(*load))) && (load->src = wcsdup(src))) {
++            TRACE("deferring %s until the document is complete\n", debugstr_w(src));
++            load->window = window;
++            IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
++            load->elem = script_elem;
++            IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
++            list_add_tail(&pending_script_loads, &load->entry);
++            return S_OK;
++        }
++        free(load);
++    }
++
+     hres = create_uri(src, 0, &uri);
+     if(FAILED(hres))
+         return hres;

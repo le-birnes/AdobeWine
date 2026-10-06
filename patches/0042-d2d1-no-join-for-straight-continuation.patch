@@ -1,0 +1,26 @@
+d2d1: Do not add a join where a path goes straight on.
+
+d2d_geometry_outline_add_join() treated every ccw == 0 join as a reversal and added a
+quad extending 25 units along the incoming direction. ccw is also 0 when two segments
+are exactly collinear, which is common in densely sampled polylines, so those got
+straight spikes off the curve (Audition Parametric Equalizer curve: a ribbon with
+gaps; Windows draws a thin line). Test: wine/tests/d2d/polyline.c with eqcurve.txt.
+
+diff --git a/dlls/d2d1/geometry.c b/dlls/d2d1/geometry.c
+index 1bb48e2..b8ef100 100644
+--- a/dlls/d2d1/geometry.c
++++ b/dlls/d2d1/geometry.c
+@@ -2961,6 +2961,13 @@ static BOOL d2d_geometry_outline_add_join(struct d2d_geometry *geometry,
+     f = &geometry->outline.faces[geometry->outline.face_count];
+ 
+     ccw = d2d_point_ccw(&origin, prev, next);
++    /* prev points back along the incoming segment and next along the outgoing one, so
++     * ccw is also 0 when the path simply goes straight on (prev = -next). No join is
++     * needed then; the extension below is only for a reversal (prev = next). Densely
++     * sampled polylines hit this often, and the 25 unit extension drew straight spikes
++     * off the curve (Audition's Parametric Equalizer). */
++    if (ccw == 0.0f && prev->x * next->x + prev->y * next->y < 0.0f)
++        return TRUE;
+     if (ccw == 0.0f)
+     {
+         d2d_outline_vertex_set(&v[0], p0->x, p0->y, -prev->x, -prev->y, -prev->x, -prev->y);

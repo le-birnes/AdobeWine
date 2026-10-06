@@ -1,0 +1,40 @@
+diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
+index feee54e..02c5e96 100644
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -34,6 +34,7 @@
+ #include "ntdll_misc.h"
+ #include "wine/list.h"
+ #include "wine/debug.h"
++#include "wine/exception.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(heap);
+ 
+@@ -1376,6 +1377,8 @@ static inline struct block *unsafe_block_from_ptr( struct heap *heap, ULONG flag
+         return block;
+     }
+ 
++    __TRY
++    {
+     if ((ULONG_PTR)ptr % BLOCK_ALIGN)
+         err = "invalid ptr alignment";
+     else if (block_get_type( block ) == BLOCK_TYPE_DEAD)
+@@ -1405,6 +1408,18 @@ static inline struct block *unsafe_block_from_ptr( struct heap *heap, ULONG flag
+     {
+         err = "invalid block type";
+     }
++    }
++    __EXCEPT_PAGE_FAULT
++    {
++        /* The pointer does not belong to any mapped heap memory (e.g. a large block that
++         * was already released). Native fails the call instead of crashing. */
++        void *frames[6] = {0};
++        RtlCaptureStackBackTrace( 0, ARRAY_SIZE(frames), frames, NULL );
++        ERR( "heap %p, invalid pointer %p (unmapped), callers %p %p %p %p %p %p\n", heap, ptr,
++             frames[0], frames[1], frames[2], frames[3], frames[4], frames[5] );
++        err = "unmapped pointer";
++    }
++    __ENDTRY
+ 
+     if (err) WARN( "heap %p, block %p: %s\n", heap, block, err );
+     return err ? NULL : block;

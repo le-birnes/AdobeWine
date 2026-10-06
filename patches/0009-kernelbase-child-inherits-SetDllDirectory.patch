@@ -1,0 +1,43 @@
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index 25b3f4f..dc860ee 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -143,9 +143,9 @@ static RTL_USER_PROCESS_PARAMETERS *create_process_params( const WCHAR *filename
+                                                            const STARTUPINFOW *startup )
+ {
+     RTL_USER_PROCESS_PARAMETERS *params;
+-    UNICODE_STRING imageW, curdirW, cmdlineW, titleW, desktopW, runtimeW, newdirW;
+-    WCHAR imagepath[MAX_PATH];
+-    WCHAR *envW = env;
++    UNICODE_STRING imageW, curdirW, cmdlineW, titleW, desktopW, runtimeW, newdirW, dllpathW, dlldirW;
++    WCHAR imagepath[MAX_PATH], dlldir[MAX_PATH];
++    WCHAR *envW = env, *load_path = NULL, *dummy;
+ 
+     if (!GetLongPathNameW( filename, imagepath, MAX_PATH )) lstrcpynW( imagepath, filename, MAX_PATH );
+     if (!GetFullPathNameW( imagepath, MAX_PATH, imagepath, NULL )) lstrcpynW( imagepath, filename, MAX_PATH );
+@@ -177,14 +177,24 @@ static RTL_USER_PROCESS_PARAMETERS *create_process_params( const WCHAR *filename
+     RtlInitUnicodeString( &desktopW, startup->lpDesktop );
+     runtimeW.Buffer = (WCHAR *)startup->lpReserved2;
+     runtimeW.Length = runtimeW.MaximumLength = startup->cbReserved2;
+-    if (RtlCreateProcessParametersEx( &params, &imageW, NULL, cur_dir ? &curdirW : NULL,
++    /* A directory set with SetDllDirectory() is inherited by child processes. */
++    dlldirW.Buffer = dlldir;
++    dlldirW.Length = 0;
++    dlldirW.MaximumLength = sizeof(dlldir);
++    if (!LdrGetDllDirectory( &dlldirW ) && dlldirW.Length > sizeof(WCHAR) && dlldir[0] &&
++        !LdrGetDllPath( imagepath, LOAD_WITH_ALTERED_SEARCH_PATH, &load_path, &dummy ))
++        RtlInitUnicodeString( &dllpathW, load_path );
++
++    if (RtlCreateProcessParametersEx( &params, &imageW, load_path ? &dllpathW : NULL, cur_dir ? &curdirW : NULL,
+                                       &cmdlineW, envW, &titleW, &desktopW,
+                                       NULL, &runtimeW, PROCESS_PARAMS_FLAG_NORMALIZED ))
+     {
++        if (load_path) RtlReleasePath( load_path );
+         RtlFreeUnicodeString( &newdirW );
+         if (envW != env) RtlFreeHeap( GetProcessHeap(), 0, envW );
+         return NULL;
+     }
++    if (load_path) RtlReleasePath( load_path );
+     RtlFreeUnicodeString( &newdirW );
+ 
+     if (!(flags & CREATE_NEW_PROCESS_GROUP))

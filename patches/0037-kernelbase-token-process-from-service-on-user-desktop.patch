@@ -1,0 +1,38 @@
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index dc860ee..cd1ec25 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -531,6 +531,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+     ULONG nt_flags = 0;
+     USHORT machine = 0;
+     NTSTATUS status;
++    STARTUPINFOW user_startup;
+ 
+     /* Process the AppName and/or CmdLine to get module name and path */
+ 
+@@ -538,6 +539,25 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+ 
+     if (new_token) FIXME( "No support for returning created process token\n" );
+ 
++    /* A service that starts a process with a user's token and no desktop (Adobe Update
++     * Service launching its installer) gets the interactive WinSta0\Default on Windows, as
++     * the new process belongs to the user's session. Wine's services run on a private
++     * window station, which would leave the child without the shell and user windows. */
++    if (token && startup_info && !startup_info->lpDesktop)
++    {
++        static const WCHAR service_winsta[] = L"__wineservice_winstation";
++        const UNICODE_STRING *desktop = &NtCurrentTeb()->Peb->ProcessParameters->Desktop;
++
++        if (desktop->Buffer && desktop->Length >= wcslen( service_winsta ) * sizeof(WCHAR) &&
++            !wcsnicmp( desktop->Buffer, service_winsta, wcslen( service_winsta ) ))
++        {
++            TRACE( "starting %s on the user's desktop\n", debugstr_w(app_name) );
++            user_startup = *startup_info;
++            user_startup.lpDesktop = (WCHAR *)L"WinSta0\\Default";
++            startup_info = &user_startup;
++        }
++    }
++
+     if (app_name)
+     {
+         if (!cmd_line || !cmd_line[0]) /* no command-line, create one */

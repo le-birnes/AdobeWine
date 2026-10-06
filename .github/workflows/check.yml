@@ -1,0 +1,20 @@
+name: check
+on: [push, pull_request]
+jobs:
+  patches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wine 11.18 source
+        run: curl -fsSL https://dl.winehq.org/wine/source/11.x/wine-11.18.tar.xz | tar -xJ
+      - name: Apply all patches in order
+        run: |
+          cd wine-11.18
+          for p in ../patches/*.patch; do patch -Np1 --quiet -i "$p" || { echo "::error::$p does not apply"; exit 1; }; done
+          echo "all $(ls ../patches/*.patch | wc -l) patches apply"
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y shellcheck
+      - run: shellcheck -S error bin/adobewine bin/env.sh scripts/*.sh

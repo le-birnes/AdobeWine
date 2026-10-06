@@ -1,0 +1,30 @@
+winhttp: Queue the response read when WinHttpReceiveResponse is called on an async request.
+
+With WINHTTP_FLAG_ASYNC, Windows returns from WinHttpReceiveResponse at once and reports
+HEADERS_AVAILABLE later. Wine read the reply inside the call when the request was already
+sent (the usual call from the SENDREQUEST_COMPLETE callback), so the caller waited for the
+server; Photoshop calls it holding its own lock, which its main thread needs at exit.
+Tests: wine/tests/winhttp/asyncrecv.c (3002 ms -> 0 ms) and asyncflow.c (async redirect +
+body read, sync session) with the local server in that folder.
+
+diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
+index 1c48892..a1558b2 100644
+--- a/dlls/winhttp/request.c
++++ b/dlls/winhttp/request.c
+@@ -3407,7 +3407,15 @@ BOOL WINAPI WinHttpReceiveResponse( HINTERNET hrequest, LPVOID reserved )
+         return FALSE;
+     }
+ 
+-    ret = receive_response( request );
++    if ((request->connect->hdr.flags & WINHTTP_FLAG_ASYNC) && request->state == REQUEST_STATE_REQUEST_SENT)
++    {
++        /* Asynchronous: return at once and read the reply in a task, as Windows does. Apps call
++         * this from the SENDREQUEST_COMPLETE callback, sometimes holding their own locks
++         * (Photoshop), and the reply can take as long as the server needs. */
++        request->state = REQUEST_STATE_READ_RESPONSE_QUEUED;
++        ret = queue_receive_response( request );
++    }
++    else ret = receive_response( request );
+ 
+     release_object( &request->hdr );
+     SetLastError( ret );

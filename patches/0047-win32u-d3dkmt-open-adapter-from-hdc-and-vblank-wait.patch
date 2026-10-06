@@ -1,0 +1,197 @@
+win32u: Implement NtGdiDdDDIOpenAdapterFromHdc and NtGdiDdDDIWaitForVerticalBlankEvent.
+
+Both were stubs (STATUS_NO_MEMORY, and an unimplemented syscall that gdi32 did not even
+export), so code pacing itself on vblank, such as Chromium's GPU vsync thread, had to fall
+back. OpenAdapterFromHdc uses the DC's display (or the primary one) and the GDI display
+name path; the wait returns at the next refresh of the current mode, as DwmFlush does.
+Test: wine/tests/vblank/vblank.c (64- and 32-bit).
+
+diff --git a/dlls/gdi32/gdi32.spec b/dlls/gdi32/gdi32.spec
+index 207549f..287da0c 100644
+--- a/dlls/gdi32/gdi32.spec
++++ b/dlls/gdi32/gdi32.spec
+@@ -148,6 +148,7 @@
+ @ stdcall D3DKMTShareObjects(long ptr ptr long ptr) win32u.NtGdiDdDDIShareObjects
+ @ stdcall D3DKMTSignalSynchronizationObjectFromCpu(ptr) win32u.NtGdiDdDDISignalSynchronizationObjectFromCpu
+ @ stdcall D3DKMTWaitForSynchronizationObjectFromCpu(ptr) win32u.NtGdiDdDDIWaitForSynchronizationObjectFromCpu
++@ stdcall D3DKMTWaitForVerticalBlankEvent(ptr) win32u.NtGdiDdDDIWaitForVerticalBlankEvent
+ @ stdcall DPtoLP(long ptr long)
+ @ stdcall DeleteColorSpace(long)
+ @ stdcall DeleteDC(long)
+diff --git a/dlls/win32u/d3dkmt.c b/dlls/win32u/d3dkmt.c
+index ae82a76..31e289a 100644
+--- a/dlls/win32u/d3dkmt.c
++++ b/dlls/win32u/d3dkmt.c
+@@ -431,8 +431,30 @@ static unsigned int validate_open_object_attributes( const OBJECT_ATTRIBUTES *at
+  */
+ NTSTATUS WINAPI NtGdiDdDDIOpenAdapterFromHdc( D3DKMT_OPENADAPTERFROMHDC *desc )
+ {
+-    FIXME( "(%p): stub\n", desc );
+-    return STATUS_NO_MEMORY;
++    D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME name_desc = {{0}};
++    DISPLAY_DEVICEW device = {.cb = sizeof(device)};
++    NTSTATUS status;
++    DWORD i;
++    DC *dc;
++
++    TRACE( "(%p)\n", desc );
++
++    if (!desc) return STATUS_INVALID_PARAMETER;
++    if (!(dc = get_dc_ptr( desc->hDc ))) return STATUS_INVALID_PARAMETER;
++    lstrcpynW( name_desc.DeviceName, dc->display, ARRAY_SIZE(name_desc.DeviceName) );
++    release_dc_ptr( dc );
++
++    /* a DC that is not for a specific display (GetDC) uses the primary one */
++    for (i = 0; !name_desc.DeviceName[0] && !NtUserEnumDisplayDevices( NULL, i, &device, 0 ); i++)
++        if (device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
++            lstrcpynW( name_desc.DeviceName, device.DeviceName, ARRAY_SIZE(name_desc.DeviceName) );
++
++    if ((status = NtUserCallOneParam( (ULONG_PTR)&name_desc, NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName )))
++        return status;
++    desc->hAdapter = name_desc.hAdapter;
++    desc->AdapterLuid = name_desc.AdapterLuid;
++    desc->VidPnSourceId = name_desc.VidPnSourceId;
++    return STATUS_SUCCESS;
+ }
+ 
+ /******************************************************************************
+@@ -830,6 +852,33 @@ NTSTATUS WINAPI NtGdiDdDDICheckOcclusion( const D3DKMT_CHECKOCCLUSION *desc )
+     return STATUS_PROCEDURE_NOT_FOUND;
+ }
+ 
++/******************************************************************************
++ *           NtGdiDdDDIWaitForVerticalBlankEvent    (win32u.@)
++ *
++ * Waits until the next vertical blank of the current display mode, computed from the
++ * performance counter as DwmFlush does (there is no real vblank to wait for here).
++ * Chromium's GPU vsync thread paces its frames with this.
++ */
++NTSTATUS WINAPI NtGdiDdDDIWaitForVerticalBlankEvent( const D3DKMT_WAITFORVERTICALBLANKEVENT *desc )
++{
++    DEVMODEW mode = {.dmSize = sizeof(mode)};
++    LARGE_INTEGER qpc, qpf, delay;
++    LONGLONG period;
++    DWORD frequency = 60;
++
++    TRACE( "(%p)\n", desc );
++
++    if (!desc || !desc->hAdapter) return STATUS_INVALID_PARAMETER;
++
++    if (NtUserEnumDisplaySettings( NULL, ENUM_CURRENT_SETTINGS, &mode, 0 ) && mode.dmDisplayFrequency > 1)
++        frequency = mode.dmDisplayFrequency;
++    NtQueryPerformanceCounter( &qpc, &qpf );
++    period = qpf.QuadPart / frequency;
++    delay.QuadPart = -((period - qpc.QuadPart % period) * 10000000 / qpf.QuadPart);
++    NtDelayExecution( FALSE, &delay );
++    return STATUS_SUCCESS;
++}
++
+ /******************************************************************************
+  *           NtGdiDdDDICheckVidPnExclusiveOwnership    (win32u.@)
+  */
+diff --git a/dlls/win32u/main.c b/dlls/win32u/main.c
+index 22e5368..04831b2 100644
+--- a/dlls/win32u/main.c
++++ b/dlls/win32u/main.c
+@@ -330,6 +330,11 @@ NTSTATUS SYSCALL_API NtGdiDdDDIOpenAdapterFromHdc( D3DKMT_OPENADAPTERFROMHDC *de
+     SYSCALL_FUNC( NtGdiDdDDIOpenAdapterFromHdc );
+ }
+ 
++NTSTATUS SYSCALL_API NtGdiDdDDIWaitForVerticalBlankEvent( const D3DKMT_WAITFORVERTICALBLANKEVENT *desc )
++{
++    SYSCALL_FUNC( NtGdiDdDDIWaitForVerticalBlankEvent );
++}
++
+ NTSTATUS SYSCALL_API NtGdiDdDDIOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc )
+ {
+     SYSCALL_FUNC( NtGdiDdDDIOpenAdapterFromLuid );
+diff --git a/dlls/win32u/win32syscalls.h b/dlls/win32u/win32syscalls.h
+index 132ac47..684459a 100644
+--- a/dlls/win32u/win32syscalls.h
++++ b/dlls/win32u/win32syscalls.h
+@@ -392,7 +392,7 @@
+     SYSCALL_ENTRY( 0x1184, NtGdiDdDDIWaitForSynchronizationObject, 0 ) \
+     SYSCALL_ENTRY( 0x1185, NtGdiDdDDIWaitForSynchronizationObjectFromCpu, 4 ) \
+     SYSCALL_ENTRY( 0x1186, NtGdiDdDDIWaitForSynchronizationObjectFromGpu, 0 ) \
+-    SYSCALL_ENTRY( 0x1187, NtGdiDdDDIWaitForVerticalBlankEvent, 0 ) \
++    SYSCALL_ENTRY( 0x1187, NtGdiDdDDIWaitForVerticalBlankEvent, 4 ) \
+     SYSCALL_ENTRY( 0x1188, NtGdiDdDDIWaitForVerticalBlankEvent2, 0 ) \
+     SYSCALL_ENTRY( 0x1189, NtGdiDdDestroyFullscreenSprite, 0 ) \
+     SYSCALL_ENTRY( 0x118a, NtGdiDdNotifyFullscreenSpriteUpdate, 0 ) \
+@@ -1934,7 +1934,7 @@
+     SYSCALL_ENTRY( 0x1184, NtGdiDdDDIWaitForSynchronizationObject, 0 ) \
+     SYSCALL_ENTRY( 0x1185, NtGdiDdDDIWaitForSynchronizationObjectFromCpu, 8 ) \
+     SYSCALL_ENTRY( 0x1186, NtGdiDdDDIWaitForSynchronizationObjectFromGpu, 0 ) \
+-    SYSCALL_ENTRY( 0x1187, NtGdiDdDDIWaitForVerticalBlankEvent, 0 ) \
++    SYSCALL_ENTRY( 0x1187, NtGdiDdDDIWaitForVerticalBlankEvent, 8 ) \
+     SYSCALL_ENTRY( 0x1188, NtGdiDdDDIWaitForVerticalBlankEvent2, 0 ) \
+     SYSCALL_ENTRY( 0x1189, NtGdiDdDestroyFullscreenSprite, 0 ) \
+     SYSCALL_ENTRY( 0x118a, NtGdiDdNotifyFullscreenSpriteUpdate, 0 ) \
+@@ -3400,7 +3400,6 @@
+     SYSCALL_STUB( NtGdiDdDDIWaitForIdle ) \
+     SYSCALL_STUB( NtGdiDdDDIWaitForSynchronizationObject ) \
+     SYSCALL_STUB( NtGdiDdDDIWaitForSynchronizationObjectFromGpu ) \
+-    SYSCALL_STUB( NtGdiDdDDIWaitForVerticalBlankEvent ) \
+     SYSCALL_STUB( NtGdiDdDDIWaitForVerticalBlankEvent2 ) \
+     SYSCALL_STUB( NtGdiDdDestroyFullscreenSprite ) \
+     SYSCALL_STUB( NtGdiDdNotifyFullscreenSpriteUpdate ) \
+diff --git a/dlls/win32u/win32u.spec b/dlls/win32u/win32u.spec
+index 2c40901..c6990ad 100644
+--- a/dlls/win32u/win32u.spec
++++ b/dlls/win32u/win32u.spec
+@@ -390,7 +390,7 @@
+ @ stub -syscall NtGdiDdDDIWaitForSynchronizationObject
+ @ stdcall -syscall NtGdiDdDDIWaitForSynchronizationObjectFromCpu(ptr)
+ @ stub -syscall NtGdiDdDDIWaitForSynchronizationObjectFromGpu
+-@ stub -syscall NtGdiDdDDIWaitForVerticalBlankEvent
++@ stdcall -syscall NtGdiDdDDIWaitForVerticalBlankEvent(ptr)
+ @ stub -syscall NtGdiDdDDIWaitForVerticalBlankEvent2
+ @ stub -syscall NtGdiDdDestroyFullscreenSprite
+ @ stub -syscall NtGdiDdNotifyFullscreenSpriteUpdate
+diff --git a/dlls/wow64win/gdi.c b/dlls/wow64win/gdi.c
+index 68bd746..44aa339 100644
+--- a/dlls/wow64win/gdi.c
++++ b/dlls/wow64win/gdi.c
+@@ -994,6 +994,12 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenAdapterFromHdc( UINT *args )
+     return status;
+ }
+ 
++NTSTATUS WINAPI wow64_NtGdiDdDDIWaitForVerticalBlankEvent( UINT *args )
++{
++    const D3DKMT_WAITFORVERTICALBLANKEVENT *desc = get_ptr( &args );  /* same layout */
++    return NtGdiDdDDIWaitForVerticalBlankEvent( desc );
++}
++
+ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenAdapterFromLuid( UINT *args )
+ {
+     D3DKMT_OPENADAPTERFROMLUID *desc = get_ptr( &args );
+diff --git a/include/ddk/d3dkmthk.h b/include/ddk/d3dkmthk.h
+index a4da022..2fd1d4d 100644
+--- a/include/ddk/d3dkmthk.h
++++ b/include/ddk/d3dkmthk.h
+@@ -89,6 +89,13 @@ typedef struct _D3DKMT_CHECKOCCLUSION
+     HWND hWnd;
+ } D3DKMT_CHECKOCCLUSION;
+ 
++typedef struct _D3DKMT_WAITFORVERTICALBLANKEVENT
++{
++    D3DKMT_HANDLE hAdapter;
++    D3DKMT_HANDLE hDevice;
++    D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId;
++} D3DKMT_WAITFORVERTICALBLANKEVENT;
++
+ typedef struct _D3DKMT_CREATEDEVICE
+ {
+     union
+diff --git a/include/ntgdi.h b/include/ntgdi.h
+index 8d89b31..1ea36b1 100644
+--- a/include/ntgdi.h
++++ b/include/ntgdi.h
+@@ -518,6 +518,7 @@ W32KAPI BOOL     WINAPI NtGdiWidenPath( HDC hdc );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDIAcquireKeyedMutex( D3DKMT_ACQUIREKEYEDMUTEX *params );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDIAcquireKeyedMutex2( D3DKMT_ACQUIREKEYEDMUTEX2 *params );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDICheckOcclusion( const D3DKMT_CHECKOCCLUSION *desc );
++W32KAPI NTSTATUS WINAPI NtGdiDdDDIWaitForVerticalBlankEvent( const D3DKMT_WAITFORVERTICALBLANKEVENT *desc );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDICheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDICloseAdapter( const D3DKMT_CLOSEADAPTER *desc );
+ W32KAPI NTSTATUS WINAPI NtGdiDdDDICreateAllocation( D3DKMT_CREATEALLOCATION *params );

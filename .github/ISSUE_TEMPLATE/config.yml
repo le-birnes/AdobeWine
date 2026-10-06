@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/le-birnes/AdobeWine/discussions
+    about: Ask questions, share tips, suggest other Adobe apps to support

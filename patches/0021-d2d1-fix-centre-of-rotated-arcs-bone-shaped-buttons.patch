@@ -1,0 +1,49 @@
+diff --git a/dlls/d2d1/geometry.c b/dlls/d2d1/geometry.c
+index b6903d0..1bb48e2 100644
+--- a/dlls/d2d1/geometry.c
++++ b/dlls/d2d1/geometry.c
+@@ -1312,8 +1312,11 @@ static int d2d_arc_to_bezier(const D2D_POINT_2F *start_point, const D2D1_ARC_SEG
+     m._32 = 0.5f * (arc->point.y + start_point->y);
+     if (!zero_center)
+     {
+-        m._31 += (m._11 * center.x + m._12 * center.y);
+-        m._32 += (m._21 * center.x + m._22 * center.y);
++        /* Same convention as d2d_point_transform(): x' = x * _11 + y * _21. The two only
++         * agree without rotation, so rotated arcs (e.g. Adobe's 90 degree circular button
++         * corners) were drawn around the wrong centre. */
++        m._31 += (center.x * m._11 + center.y * m._21);
++        m._32 += (center.x * m._12 + center.y * m._22);
+     }
+ 
+     cPieces = d2d_arc_get_piece_count(&ptStart, &ptEnd, large_arc, sweep_up, &rCosArcAngle, &rSinArcAngle);
+@@ -1431,8 +1434,19 @@ static bool d2d_figure_begin(struct d2d_figure *figure, D2D1_POINT_2F start_poin
+ 
+ static void d2d_figure_end(struct d2d_figure *figure, D2D1_FIGURE_END figure_end)
+ {
++    D2D1_POINT_2F *first, *last;
++
+     d2d_figure_produce_vertices(figure);
+ 
++    /* Snap an end point that misses the start by float rounding only (Adobe's rounded
++     * buttons end at 9.99999905 for a start of 10). Otherwise a closing segment of a
++     * millionth of a pixel is outlined, its direction is noise, and the join draws a
++     * long spike. */
++    first = &figure->vertices[0];
++    last = &figure->vertices[figure->vertex_count - 1];
++    if (figure->vertex_count > 1 && fabsf(first->x - last->x) <= 1.0e-3f && fabsf(first->y - last->y) <= 1.0e-3f)
++        *last = *first;
++
+     if (memcmp(&figure->vertices[0], &figure->vertices[figure->vertex_count - 1], sizeof(*figure->vertices)))
+         figure->vertex_types[figure->vertex_count - 1] = D2D_VERTEX_TYPE_LINE;
+     else
+@@ -3802,7 +3816,9 @@ static void STDMETHODCALLTYPE d2d_geometry_sink_AddArc(ID2D1GeometrySink *iface,
+ {
+     struct d2d_geometry *geometry = impl_from_ID2D1GeometrySink(iface);
+ 
+-    TRACE("iface %p, arc %p.\n", iface, arc);
++    TRACE("iface %p, arc %p {%s, %.8e x %.8e, rotation %.8e, sweep %u, size %u}.\n", iface, arc,
++            debug_d2d_point_2f(&arc->point), arc->size.width, arc->size.height, arc->rotationAngle,
++            arc->sweepDirection, arc->arcSize);
+ 
+     if (geometry->u.path.state != D2D_GEOMETRY_STATE_FIGURE)
+     {

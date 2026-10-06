@@ -1,0 +1,14 @@
+diff --git a/dlls/jscript/string.c b/dlls/jscript/string.c
+index a151d09..f30b503 100644
+--- a/dlls/jscript/string.c
++++ b/dlls/jscript/string.c
+@@ -1173,7 +1173,8 @@ static HRESULT String_split(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsign
+                 if(!ptr2)
+                     break;
+             }else {
+-                if(!*ptr)
++                /* the string may contain embedded nulls */
++                if(ptr >= str + length)
+                     break;
+                 ptr2 = ptr+1;
+             }

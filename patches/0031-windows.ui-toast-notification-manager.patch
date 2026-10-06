@@ -1,0 +1,524 @@
+diff --git a/dlls/windows.ui/Makefile.in b/dlls/windows.ui/Makefile.in
+index a2eae42..df942a4 100644
+--- a/dlls/windows.ui/Makefile.in
++++ b/dlls/windows.ui/Makefile.in
+@@ -7,6 +7,7 @@ SOURCES = \
+ 	corewindow.c \
+ 	inputpane.c \
+ 	main.c \
++	toastnotification.c \
+ 	uisettings.c \
+ 	uiviewsettings.c \
+ 	weakref.c
+diff --git a/dlls/windows.ui/classes.idl b/dlls/windows.ui/classes.idl
+index 0f79fdc..9c33335 100644
+--- a/dlls/windows.ui/classes.idl
++++ b/dlls/windows.ui/classes.idl
+@@ -34,6 +34,9 @@ import "windows.ui.core.idl";
+ import "windows.ui.input.idl";
+ import "windows.ui.windowmanagement.idl";
+ import "windows.ui.viewmanagement.idl";
++import "windows.data.xml.dom.idl";
++import "windows.applicationmodel.idl";
++import "windows.ui.notifications.idl";
+ 
+ namespace Windows.UI.Core {
+     runtimeclass CoreWindow;
+@@ -45,3 +48,7 @@ namespace Windows.UI.ViewManagement {
+     runtimeclass UIViewSettings;
+     runtimeclass InputPane;
+ }
++
++namespace Windows.UI.Notifications {
++    runtimeclass ToastNotificationManager;
++}
+diff --git a/dlls/windows.ui/main.c b/dlls/windows.ui/main.c
+index 9c76661..791da84 100644
+--- a/dlls/windows.ui/main.c
++++ b/dlls/windows.ui/main.c
+@@ -53,6 +53,9 @@ HRESULT WINAPI DllGetActivationFactory( HSTRING classid, IActivationFactory **fa
+     if (!wcscmp( buffer, RuntimeClass_Windows_UI_Core_CoreWindow ))
+         IActivationFactory_QueryInterface( corewindow_factory, &IID_IActivationFactory, (void **)factory );
+ 
++    if (!wcscmp( buffer, L"Windows.UI.Notifications.ToastNotificationManager" ))
++        IActivationFactory_QueryInterface( toastnotificationmanager_factory, &IID_IActivationFactory, (void **)factory );
++
+     if (*factory) return S_OK;
+     return CLASS_E_CLASSNOTAVAILABLE;
+ }
+diff --git a/dlls/windows.ui/private.h b/dlls/windows.ui/private.h
+index 64566fd..2e14626 100644
+--- a/dlls/windows.ui/private.h
++++ b/dlls/windows.ui/private.h
+@@ -43,6 +43,7 @@ extern IActivationFactory *uisettings_factory;
+ extern IActivationFactory *uiviewsettings_factory;
+ extern IActivationFactory *inputpane_factory;
+ extern IActivationFactory *corewindow_factory;
++extern IActivationFactory *toastnotificationmanager_factory;
+ 
+ #define DEFINE_IINSPECTABLE_( pfx, iface_type, impl_type, impl_from, iface_mem, expr )             \
+     static inline impl_type *impl_from( iface_type *iface )                                        \
+diff --git a/dlls/windows.ui/toastnotification.c b/dlls/windows.ui/toastnotification.c
+new file mode 100644
+index 0000000..364d857
+--- /dev/null
++++ b/dlls/windows.ui/toastnotification.c
+@@ -0,0 +1,458 @@
++/* WinRT Windows.UI.Notifications.ToastNotificationManager Implementation
++ *
++ * Copyright 2026 AdobeWine
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++/* There is no notification centre to show toasts in, so the notifier accepts every
++ * request and drops it, as Windows does when the user has turned notifications off
++ * for an application. Apps (Creative Cloud desktop) only need a working notifier. */
++
++#include "private.h"
++#include "initguid.h"
++
++#define WIDL_using_Windows_Foundation_Collections
++#define WIDL_using_Windows_Data_Xml_Dom
++#include "windows.data.xml.dom.h"
++#define WIDL_using_Windows_UI_Notifications
++#include "windows.ui.notifications.h"
++
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(ui);
++
++struct toast_notifier
++{
++    IToastNotifier IToastNotifier_iface;
++    LONG ref;
++};
++
++static inline struct toast_notifier *impl_from_IToastNotifier( IToastNotifier *iface )
++{
++    return CONTAINING_RECORD( iface, struct toast_notifier, IToastNotifier_iface );
++}
++
++static HRESULT WINAPI notifier_QueryInterface( IToastNotifier *iface, REFIID iid, void **out )
++{
++    struct toast_notifier *impl = impl_from_IToastNotifier( iface );
++
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_IToastNotifier ))
++    {
++        *out = &impl->IToastNotifier_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI notifier_AddRef( IToastNotifier *iface )
++{
++    struct toast_notifier *impl = impl_from_IToastNotifier( iface );
++    ULONG ref = InterlockedIncrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static ULONG WINAPI notifier_Release( IToastNotifier *iface )
++{
++    struct toast_notifier *impl = impl_from_IToastNotifier( iface );
++    ULONG ref = InterlockedDecrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    if (!ref) free( impl );
++    return ref;
++}
++
++static HRESULT WINAPI notifier_GetIids( IToastNotifier *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI notifier_GetRuntimeClassName( IToastNotifier *iface, HSTRING *class_name )
++{
++    TRACE( "iface %p, class_name %p.\n", iface, class_name );
++    return WindowsCreateString( RuntimeClass_Windows_UI_Notifications_ToastNotifier,
++                                wcslen( RuntimeClass_Windows_UI_Notifications_ToastNotifier ), class_name );
++}
++
++static HRESULT WINAPI notifier_GetTrustLevel( IToastNotifier *iface, TrustLevel *trust_level )
++{
++    TRACE( "iface %p, trust_level %p.\n", iface, trust_level );
++    *trust_level = BaseTrust;
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_Show( IToastNotifier *iface, IToastNotification *notification )
++{
++    TRACE( "iface %p, notification %p, dropped.\n", iface, notification );
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_Hide( IToastNotifier *iface, IToastNotification *notification )
++{
++    TRACE( "iface %p, notification %p.\n", iface, notification );
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_get_Setting( IToastNotifier *iface, NotificationSetting *value )
++{
++    TRACE( "iface %p, value %p.\n", iface, value );
++    *value = NotificationSetting_Enabled;
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_AddToSchedule( IToastNotifier *iface, IScheduledToastNotification *toast )
++{
++    TRACE( "iface %p, toast %p, dropped.\n", iface, toast );
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_RemoveFromSchedule( IToastNotifier *iface, IScheduledToastNotification *toast )
++{
++    TRACE( "iface %p, toast %p.\n", iface, toast );
++    return S_OK;
++}
++
++static HRESULT WINAPI notifier_GetScheduledToastNotifications( IToastNotifier *iface,
++                                                               IVectorView_ScheduledToastNotification **result )
++{
++    FIXME( "iface %p, result %p stub!\n", iface, result );
++    *result = NULL;
++    return E_NOTIMPL;
++}
++
++static const struct IToastNotifierVtbl notifier_vtbl =
++{
++    notifier_QueryInterface,
++    notifier_AddRef,
++    notifier_Release,
++    /* IInspectable methods */
++    notifier_GetIids,
++    notifier_GetRuntimeClassName,
++    notifier_GetTrustLevel,
++    /* IToastNotifier methods */
++    notifier_Show,
++    notifier_Hide,
++    notifier_get_Setting,
++    notifier_AddToSchedule,
++    notifier_RemoveFromSchedule,
++    notifier_GetScheduledToastNotifications,
++};
++
++static HRESULT create_notifier( IToastNotifier **out )
++{
++    struct toast_notifier *impl;
++
++    if (!(impl = calloc( 1, sizeof(*impl) )))
++    {
++        *out = NULL;
++        return E_OUTOFMEMORY;
++    }
++    impl->IToastNotifier_iface.lpVtbl = &notifier_vtbl;
++    impl->ref = 1;
++    *out = &impl->IToastNotifier_iface;
++    return S_OK;
++}
++
++/* Nothing is ever shown, so the history is always empty and removing from it succeeds. */
++static HRESULT WINAPI history_QueryInterface( IToastNotificationHistory *iface, REFIID iid, void **out )
++{
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_IToastNotificationHistory ))
++    {
++        *out = iface;
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI history_AddRef( IToastNotificationHistory *iface )
++{
++    return 2;
++}
++
++static ULONG WINAPI history_Release( IToastNotificationHistory *iface )
++{
++    return 1;
++}
++
++static HRESULT WINAPI history_GetIids( IToastNotificationHistory *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI history_GetRuntimeClassName( IToastNotificationHistory *iface, HSTRING *class_name )
++{
++    TRACE( "iface %p, class_name %p.\n", iface, class_name );
++    return WindowsCreateString( RuntimeClass_Windows_UI_Notifications_ToastNotificationHistory,
++                                wcslen( RuntimeClass_Windows_UI_Notifications_ToastNotificationHistory ), class_name );
++}
++
++static HRESULT WINAPI history_GetTrustLevel( IToastNotificationHistory *iface, TrustLevel *trust_level )
++{
++    *trust_level = BaseTrust;
++    return S_OK;
++}
++
++static HRESULT WINAPI history_RemoveGroup( IToastNotificationHistory *iface, HSTRING group )
++{
++    TRACE( "iface %p, group %s.\n", iface, debugstr_hstring( group ) );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_RemoveGroupWithId( IToastNotificationHistory *iface, HSTRING group, HSTRING id )
++{
++    TRACE( "iface %p, group %s, id %s.\n", iface, debugstr_hstring( group ), debugstr_hstring( id ) );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_RemoveGroupedTagWithId( IToastNotificationHistory *iface, HSTRING tag, HSTRING group, HSTRING id )
++{
++    TRACE( "iface %p, tag %s, group %s, id %s.\n", iface, debugstr_hstring( tag ), debugstr_hstring( group ),
++           debugstr_hstring( id ) );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_RemoveGroupedTag( IToastNotificationHistory *iface, HSTRING tag, HSTRING group )
++{
++    TRACE( "iface %p, tag %s, group %s.\n", iface, debugstr_hstring( tag ), debugstr_hstring( group ) );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_Remove( IToastNotificationHistory *iface, HSTRING tag )
++{
++    TRACE( "iface %p, tag %s.\n", iface, debugstr_hstring( tag ) );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_Clear( IToastNotificationHistory *iface )
++{
++    TRACE( "iface %p.\n", iface );
++    return S_OK;
++}
++
++static HRESULT WINAPI history_ClearWithId( IToastNotificationHistory *iface, HSTRING id )
++{
++    TRACE( "iface %p, id %s.\n", iface, debugstr_hstring( id ) );
++    return S_OK;
++}
++
++static const struct IToastNotificationHistoryVtbl history_vtbl =
++{
++    history_QueryInterface,
++    history_AddRef,
++    history_Release,
++    /* IInspectable methods */
++    history_GetIids,
++    history_GetRuntimeClassName,
++    history_GetTrustLevel,
++    /* IToastNotificationHistory methods */
++    history_RemoveGroup,
++    history_RemoveGroupWithId,
++    history_RemoveGroupedTagWithId,
++    history_RemoveGroupedTag,
++    history_Remove,
++    history_Clear,
++    history_ClearWithId,
++};
++
++static IToastNotificationHistory toast_history = { &history_vtbl };
++
++struct toast_manager_statics
++{
++    IActivationFactory IActivationFactory_iface;
++    IToastNotificationManagerStatics IToastNotificationManagerStatics_iface;
++    IToastNotificationManagerStatics2 IToastNotificationManagerStatics2_iface;
++    LONG ref;
++};
++
++static inline struct toast_manager_statics *impl_from_IActivationFactory( IActivationFactory *iface )
++{
++    return CONTAINING_RECORD( iface, struct toast_manager_statics, IActivationFactory_iface );
++}
++
++static HRESULT WINAPI factory_QueryInterface( IActivationFactory *iface, REFIID iid, void **out )
++{
++    struct toast_manager_statics *impl = impl_from_IActivationFactory( iface );
++
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_IActivationFactory ))
++    {
++        *out = &impl->IActivationFactory_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++    if (IsEqualGUID( iid, &IID_IToastNotificationManagerStatics ))
++    {
++        *out = &impl->IToastNotificationManagerStatics_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++    if (IsEqualGUID( iid, &IID_IToastNotificationManagerStatics2 ))
++    {
++        *out = &impl->IToastNotificationManagerStatics2_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI factory_AddRef( IActivationFactory *iface )
++{
++    struct toast_manager_statics *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedIncrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static ULONG WINAPI factory_Release( IActivationFactory *iface )
++{
++    struct toast_manager_statics *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedDecrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static HRESULT WINAPI factory_GetIids( IActivationFactory *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetRuntimeClassName( IActivationFactory *iface, HSTRING *class_name )
++{
++    FIXME( "iface %p, class_name %p stub!\n", iface, class_name );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetTrustLevel( IActivationFactory *iface, TrustLevel *trust_level )
++{
++    FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_ActivateInstance( IActivationFactory *iface, IInspectable **instance )
++{
++    TRACE( "iface %p, instance %p, static class.\n", iface, instance );
++    *instance = NULL;
++    return E_NOTIMPL;
++}
++
++static const struct IActivationFactoryVtbl factory_vtbl =
++{
++    factory_QueryInterface,
++    factory_AddRef,
++    factory_Release,
++    /* IInspectable methods */
++    factory_GetIids,
++    factory_GetRuntimeClassName,
++    factory_GetTrustLevel,
++    /* IActivationFactory methods */
++    factory_ActivateInstance,
++};
++
++DEFINE_IINSPECTABLE( manager_statics, IToastNotificationManagerStatics, struct toast_manager_statics, IActivationFactory_iface );
++
++static HRESULT WINAPI manager_statics_CreateToastNotifier( IToastNotificationManagerStatics *iface, IToastNotifier **result )
++{
++    TRACE( "iface %p, result %p.\n", iface, result );
++    return create_notifier( result );
++}
++
++static HRESULT WINAPI manager_statics_CreateToastNotifierWithId( IToastNotificationManagerStatics *iface, HSTRING id,
++                                                                 IToastNotifier **result )
++{
++    TRACE( "iface %p, id %s, result %p.\n", iface, debugstr_hstring( id ), result );
++    return create_notifier( result );
++}
++
++static HRESULT WINAPI manager_statics_GetTemplateContent( IToastNotificationManagerStatics *iface, ToastTemplateType type,
++                                                          IXmlDocument **result )
++{
++    FIXME( "iface %p, type %d, result %p stub!\n", iface, type, result );
++    *result = NULL;
++    return E_NOTIMPL;
++}
++
++static const struct IToastNotificationManagerStaticsVtbl manager_statics_vtbl =
++{
++    manager_statics_QueryInterface,
++    manager_statics_AddRef,
++    manager_statics_Release,
++    /* IInspectable methods */
++    manager_statics_GetIids,
++    manager_statics_GetRuntimeClassName,
++    manager_statics_GetTrustLevel,
++    /* IToastNotificationManagerStatics methods */
++    manager_statics_CreateToastNotifier,
++    manager_statics_CreateToastNotifierWithId,
++    manager_statics_GetTemplateContent,
++};
++
++DEFINE_IINSPECTABLE( manager_statics2, IToastNotificationManagerStatics2, struct toast_manager_statics, IActivationFactory_iface );
++
++static HRESULT WINAPI manager_statics2_get_History( IToastNotificationManagerStatics2 *iface, IToastNotificationHistory **value )
++{
++    TRACE( "iface %p, value %p.\n", iface, value );
++    *value = &toast_history;
++    return S_OK;
++}
++
++static const struct IToastNotificationManagerStatics2Vtbl manager_statics2_vtbl =
++{
++    manager_statics2_QueryInterface,
++    manager_statics2_AddRef,
++    manager_statics2_Release,
++    /* IInspectable methods */
++    manager_statics2_GetIids,
++    manager_statics2_GetRuntimeClassName,
++    manager_statics2_GetTrustLevel,
++    /* IToastNotificationManagerStatics2 methods */
++    manager_statics2_get_History,
++};
++
++static struct toast_manager_statics toast_manager_statics =
++{
++    {&factory_vtbl},
++    {&manager_statics_vtbl},
++    {&manager_statics2_vtbl},
++    1,
++};
++
++IActivationFactory *toastnotificationmanager_factory = &toast_manager_statics.IActivationFactory_iface;

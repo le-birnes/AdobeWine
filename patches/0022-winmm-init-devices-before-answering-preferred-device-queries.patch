@@ -1,0 +1,38 @@
+diff --git a/dlls/winmm/waveform.c b/dlls/winmm/waveform.c
+index 5b9134d..9552d02 100644
+--- a/dlls/winmm/waveform.c
++++ b/dlls/winmm/waveform.c
+@@ -3114,6 +3114,8 @@ UINT WINAPI waveOutMessage(HWAVEOUT hWaveOut, UINT uMessage,
+         if(!dwParam1 || !dwParam2)
+             return MMSYSERR_INVALPARAM;
+ 
++        /* May be the first winmm call (Audition asks before enumerating). */
++        InitOnceExecuteOnce(&init_once, WINMM_InitMMDevices, NULL, NULL);
+         if(g_outmmdevices_count > 0)
+             /* Device 0 is always the default device */
+             *(DWORD *)dwParam1 = 0;
+@@ -3128,6 +3130,7 @@ UINT WINAPI waveOutMessage(HWAVEOUT hWaveOut, UINT uMessage,
+         if(!dwParam1 || !dwParam2)
+             return MMSYSERR_INVALPARAM;
+ 
++        InitOnceExecuteOnce(&init_once, WINMM_InitMMDevices, NULL, NULL);
+         /* Device ID */
+         *(DWORD *)dwParam1 = g_out_voicecom_id;
+         /* Status flags */
+@@ -3527,6 +3530,8 @@ UINT WINAPI waveInMessage(HWAVEIN hWaveIn, UINT uMessage,
+         if(!dwParam1 || !dwParam2)
+             return MMSYSERR_INVALPARAM;
+ 
++        /* May be the first winmm call (Audition asks before enumerating). */
++        InitOnceExecuteOnce(&init_once, WINMM_InitMMDevices, NULL, NULL);
+         if(g_inmmdevices_count > 0)
+             /* Device 0 is always the default device */
+             *(DWORD *)dwParam1 = 0;
+@@ -3541,6 +3546,7 @@ UINT WINAPI waveInMessage(HWAVEIN hWaveIn, UINT uMessage,
+         if(!dwParam1 || !dwParam2)
+             return MMSYSERR_INVALPARAM;
+ 
++        InitOnceExecuteOnce(&init_once, WINMM_InitMMDevices, NULL, NULL);
+         /* Device ID */
+         *(DWORD *)dwParam1 = g_in_voicecom_id;
+         /* Status flags */

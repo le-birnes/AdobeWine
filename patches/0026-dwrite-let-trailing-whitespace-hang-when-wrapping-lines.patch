@@ -1,0 +1,34 @@
+diff --git a/dlls/dwrite/layout.c b/dlls/dwrite/layout.c
+index 9cd162f..355e23c 100644
+--- a/dlls/dwrite/layout.c
++++ b/dlls/dwrite/layout.c
+@@ -2513,13 +2513,19 @@ static HRESULT layout_compute_lines(struct dwrite_textlayout *layout)
+     max_width = layout->metrics.layoutWidth;
+     while (remaining_clusters)
+     {
++        bool overflow = false;
++
+         width = 0.0f;
+         for (end_cluster = start_cluster; end_cluster < layout->cluster_count; ++end_cluster)
+         {
+             if (layout->clustermetrics[end_cluster].isNewline) break;
+             width += layout->clustermetrics[end_cluster].width;
+-            if (wraps && width > max_width)
++            /* Whitespace hangs past the layout width instead of forcing a break, and allow
++             * for float rounding: apps measure a string and lay it out again at exactly the
++             * measured width (Premiere's "Time Remapping  " labels). */
++            if (wraps && !layout->clustermetrics[end_cluster].isWhitespace && width > max_width + 0.001f)
+             {
++                overflow = true;
+                 /* Do not consume cluster that caused overflow, while making sure
+                    some clusters are still consumed. */
+                 if (end_cluster > start_cluster) --end_cluster;
+@@ -2532,7 +2538,7 @@ static HRESULT layout_compute_lines(struct dwrite_textlayout *layout)
+         end_cluster = min(end_cluster, layout->cluster_count - 1);
+ 
+         /* Adjust end cluster for wrapping. */
+-        if (wraps && width > max_width)
++        if (wraps && overflow)
+         {
+             /* Break position depends on the wrapping mode:
+ 

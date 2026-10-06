@@ -1,0 +1,93 @@
+diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
+index 9165c67..c677aa6 100644
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -317,7 +317,8 @@ C_ASSERT( offsetof(struct heap, subheap) <= REGION_ALIGN - 1 );
+ 
+ C_ASSERT( HEAP_MIN_LARGE_BLOCK_SIZE <= HEAP_INITIAL_GROW_SIZE );
+ 
+-#define MAX_FREE_PENDING     1024    /* max number of free requests to delay */
++static DWORD max_free_pending = 1024; /* max number of free requests to delay */
++#define MAX_FREE_PENDING     max_free_pending
+ 
+ /* some undocumented flags (names are made up) */
+ #define HEAP_PRIVATE          0x00001000
+@@ -886,11 +887,18 @@ static void insert_free_block( struct heap *heap, ULONG flags, SUBHEAP *subheap,
+ }
+ 
+ 
++static BOOL heap_quarantine(void);
++
+ static struct block *heap_delay_free( struct heap *heap, ULONG flags, struct block *block )
+ {
+     struct block *tmp;
+ 
+     if (!heap->pending_free) return block;
++    /* the quarantine only holds small blocks: holding thousands of large freed buffers
++     * exhausted memory (Creative Cloud helpers free many big blocks) */
++    if (!(flags & HEAP_FREE_CHECKING_ENABLED) && !RUNNING_ON_VALGRIND && heap_quarantine() &&
++        block_get_size( block ) > 8192)
++        return block;
+ 
+     block_set_type( block, BLOCK_TYPE_DEAD );
+     mark_block_free( block + 1, block_get_size( block ) - sizeof(*block), flags );
+@@ -907,6 +915,49 @@ static struct block *heap_delay_free( struct heap *heap, ULONG flags, struct blo
+ }
+ 
+ 
++/* WINE_HEAP_QUARANTINE: "1" or "*" for every process, or a ';'-separated list of exe names.
++ * Freed blocks then wait in the delayed free ring (contents left intact, no fill pattern)
++ * before they can be reused, so an application that keeps writing to an object after
++ * freeing it (Creative Cloud desktop's helpers) damages idle memory instead of live free
++ * list links. Windows' heap reuses freed blocks far less eagerly, which hides such bugs. */
++static BOOL heap_quarantine(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0)
++    {
++        WCHAR buffer[512], *image, *p, *item;
++        UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINE_HEAP_QUARANTINE" ), value;
++        const UNICODE_STRING *path = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
++
++        enabled = 0;
++        value.Buffer = buffer;
++        value.MaximumLength = sizeof(buffer) - sizeof(WCHAR);
++        if (RtlQueryEnvironmentVariable_U( NULL, &name, &value )) return FALSE;
++        buffer[value.Length / sizeof(WCHAR)] = 0;
++        if (!wcscmp( buffer, L"1" ) || !wcscmp( buffer, L"*" )) goto on;
++
++        if (!path->Buffer) return FALSE;
++        image = path->Buffer + path->Length / sizeof(WCHAR);
++        while (image > path->Buffer && image[-1] != '\\' && image[-1] != '/') image--;
++        for (item = buffer; item && *item; item = p)
++        {
++            SIZE_T len;
++            if ((p = wcschr( item, ';' ))) *p++ = 0;
++            len = wcslen( item );
++            if (len && len == path->Buffer + path->Length / sizeof(WCHAR) - image &&
++                !wcsnicmp( image, item, len )) goto on;
++        }
++    }
++    return enabled;
++
++on:
++    /* a longer delay than the free-checking default: busy processes (node.exe) free
++     * thousands of blocks between an object's release and the stale write */
++    max_free_pending = 16384;
++    return (enabled = 1);
++}
++
+ static BOOL release_empty_subheaps(void)
+ {
+     static int release = -1;
+@@ -1624,7 +1675,8 @@ static void heap_set_debug_flags( HANDLE handle )
+     }
+ 
+     if ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&
+-        ((flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND))
++        (heap_quarantine() /* first: it sets the ring size */ ||
++         (flags & HEAP_FREE_CHECKING_ENABLED) || RUNNING_ON_VALGRIND))
+     {
+         heap->pending_free = RtlAllocateHeap( handle, HEAP_ZERO_MEMORY,
+                                               MAX_FREE_PENDING * sizeof(*heap->pending_free) );

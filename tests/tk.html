@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><script>
+function log(s){ new Image().src="http://127.0.0.1:8765/r?"+encodeURIComponent(s); }
+function t(name,fn){ try{ log(name+" = "+fn()); }catch(e){ log(name+" THREW "+e.message); } }
+window.onload=function(){
+  var b="AAEAAANOAG8AaQBwAHEAbQBsAGsAagByAGEAYgBjAHMAdABoAGcAZgB6AHkA";
+  t("docmode",function(){return document.documentMode});
+  t("typeof atob",function(){return typeof atob});
+  t("atob len",function(){return atob(b).length});
+  t("atob codes",function(){var s=atob(b),o=[];for(var i=0;i<8;i++)o.push(s.charCodeAt(i));return o.join(",")});
+  t("split len",function(){return atob(b).split("").length});
+  t("map len",function(){return atob(b).split("").map(function(c){return c.charCodeAt(0)}).length});
+  t("u8 from array len",function(){return new Uint8Array([1,2,3,4,5,6,7,8]).length});
+  t("u8 from map len",function(){return new Uint8Array(atob(b).split("").map(function(c){return c.charCodeAt(0)})).length});
+  t("u8[5]",function(){return new Uint8Array([1,2,3,4,5,6,7,8])[5]});
+  t("dv",function(){var a=new Uint8Array([0,1,0,0,3,78,0,111]);var d=new DataView(a.buffer);return d.getUint8(0)+","+d.getUint8(1)+","+d.getUint32(2)});
+  t("u8 view",function(){var a=new Uint8Array([0,1,0,0,3,78,0,111]);var v=new Uint8Array(a.buffer,6);return v.length+","+v.byteOffset+","+v.byteLength});
+  t("dv3",function(){var a=new Uint8Array([0,1,0,0,3,78,0,111]);var v=new Uint8Array(a.buffer,6);var d=new DataView(v.buffer,v.byteOffset,v.byteLength);return d.byteLength+","+d.getUint16(0)});
+  log("done");
+};
+</script></head><body>t</body></html>

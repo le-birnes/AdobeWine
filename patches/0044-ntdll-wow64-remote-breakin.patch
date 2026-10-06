@@ -1,0 +1,55 @@
+ntdll: Break into a wow64 process at its 32-bit DbgUiRemoteBreakin.
+
+DbgUiIssueRemoteBreakin() in a 64-bit debugger passes its own ntdll DbgUiRemoteBreakin,
+which a wow64 target maps at the same address; the target started the thread in
+32-bit mode at that address cut to 32 bits and crashed (DebugBreakProcess on a
+32-bit Adobe helper while Photoshop quit). Use the 32-bit ntdll export instead.
+Test: wine/tests/debug/breakin.c + sleeper32.c (child crashed, now exits normally).
+
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index ebfb6af..3ea61cf 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -96,6 +96,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(module);
+ #endif
+ 
+ void *pDbgUiRemoteBreakin = NULL;
++void *pDbgUiRemoteBreakin_wow64 = NULL;
+ void *pKiRaiseUserExceptionDispatcher = NULL;
+ void *pKiUserExceptionDispatcher = NULL;
+ void *pKiUserApcDispatcher = NULL;
+@@ -1617,6 +1618,7 @@ static void load_ntdll_wow64_functions( HMODULE module )
+ #undef GET_FUNC
+ 
+     p__wine_ctrl_routine = (void *)find_named_export( module, exports, "__wine_ctrl_routine" );
++    pDbgUiRemoteBreakin_wow64 = (void *)find_named_export( module, exports, "DbgUiRemoteBreakin" );
+ 
+ #ifdef _WIN64
+     {
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index fa9138d..6cff063 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -669,6 +669,10 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
+         {
+             /* FIXME: hack for debugging 32-bit process without a 64-bit ntdll */
+             if (is_old_wow64() && func == (void *)0x7ffe1000) func = pDbgUiRemoteBreakin;
++            /* A 64-bit debugger breaking into a wow64 process passes the 64-bit ntdll's
++             * DbgUiRemoteBreakin, mapped at the same address here; the thread would start
++             * in 32-bit mode at that address cut to 32 bits. Use the 32-bit one. */
++            if (pDbgUiRemoteBreakin_wow64 && func == pDbgUiRemoteBreakin) func = pDbgUiRemoteBreakin_wow64;
+             attr->TotalLength = sizeof(buffer);
+             attr->Attributes[0].Attribute    = PS_ATTRIBUTE_CLIENT_ID;
+             attr->Attributes[0].Size         = sizeof(id);
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index 9b6401e..9969c4c 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -190,6 +190,7 @@ static const LONG teb_offset = 0x2000;
+ 
+ /* callbacks to PE ntdll from the Unix side */
+ extern void *pDbgUiRemoteBreakin;
++extern void *pDbgUiRemoteBreakin_wow64;
+ extern void *pKiRaiseUserExceptionDispatcher;
+ extern void *pKiUserExceptionDispatcher;
+ extern void *pKiUserApcDispatcher;

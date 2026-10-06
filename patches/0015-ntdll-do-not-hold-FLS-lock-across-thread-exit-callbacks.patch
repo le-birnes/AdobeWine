@@ -1,0 +1,27 @@
+diff --git a/dlls/ntdll/thread.c b/dlls/ntdll/thread.c
+index 1c25c8f..b9548d1 100644
+--- a/dlls/ntdll/thread.c
++++ b/dlls/ntdll/thread.c
+@@ -708,10 +708,18 @@ void WINAPI DECLSPEC_HOTPATCH RtlProcessFlsData( void *teb_fls_data, ULONG flags
+ 
+                 if (callback && callback != (void *)~(ULONG_PTR)0)
+                 {
+-                    TRACE_(relay)("Calling FLS callback %p, arg %p.\n", callback,
+-                            fls->fls_data_chunks[i][index + 1]);
+-
+-                    callback( fls->fls_data_chunks[i][index + 1] );
++                    void *data = fls->fls_data_chunks[i][index + 1];
++
++                    TRACE_(relay)("Calling FLS callback %p, arg %p.\n", callback, data);
++
++                    /* Do not hold the FLS lock across the callback: it may block on a lock
++                     * owned by a thread that is itself waiting in FlsAlloc/FlsFree. Clear the
++                     * slot first, so that a concurrent FlsFree cannot run the callback on the
++                     * same data again (a double free). */
++                    fls->fls_data_chunks[i][index + 1] = NULL;
++                    unlock_fls_data();
++                    callback( data );
++                    lock_fls_data();
+                 }
+                 fls->fls_data_chunks[i][index + 1] = NULL;
+             }

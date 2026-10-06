@@ -1,0 +1,81 @@
+diff --git a/dlls/dxcore/dxcore.c b/dlls/dxcore/dxcore.c
+index 0bea5e3..377a80b 100644
+--- a/dlls/dxcore/dxcore.c
++++ b/dlls/dxcore/dxcore.c
+@@ -91,14 +91,39 @@ static BOOL STDMETHODCALLTYPE dxcore_adapter_IsValid(IDXCoreAdapter *iface)
+ 
+ static BOOL STDMETHODCALLTYPE dxcore_adapter_IsAttributeSupported(IDXCoreAdapter *iface, REFGUID attribute)
+ {
+-    FIXME("iface %p, attribute %s stub!\n", iface, debugstr_guid(attribute));
++    TRACE("iface %p, attribute %s.\n", iface, debugstr_guid(attribute));
++
++    /* All enumerated adapters are hardware graphics adapters. */
++    if (IsEqualGUID(attribute, &DXCORE_ADAPTER_ATTRIBUTE_D3D11_GRAPHICS)
++            || IsEqualGUID(attribute, &DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS)
++            || IsEqualGUID(attribute, &DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE))
++        return TRUE;
++
++    FIXME("Unhandled attribute %s.\n", debugstr_guid(attribute));
+     return FALSE;
+ }
+ 
+ static BOOL STDMETHODCALLTYPE dxcore_adapter_IsPropertySupported(IDXCoreAdapter *iface, DXCoreAdapterProperty property)
+ {
+-    FIXME("iface %p, property %u stub!\n", iface, property);
+-    return FALSE;
++    TRACE("iface %p, property %u.\n", iface, property);
++
++    switch (property)
++    {
++        case InstanceLuid:
++        case DriverVersion:
++        case DriverDescription:
++        case HardwareID:
++        case DedicatedAdapterMemory:
++        case DedicatedSystemMemory:
++        case SharedSystemMemory:
++        case IsHardware:
++        case IsIntegrated:
++        case IsDetachable:
++            return TRUE;
++        default:
++            FIXME("Unhandled property %u.\n", property);
++            return FALSE;
++    }
+ }
+ 
+ static HRESULT dxcore_adapter_get_property_size(struct dxcore_adapter *adapter,
+@@ -113,6 +138,8 @@ static HRESULT dxcore_adapter_get_property_size(struct dxcore_adapter *adapter,
+         [DedicatedSystemMemory] = sizeof(UINT64),
+         [SharedSystemMemory] = sizeof(UINT64),
+         [IsHardware] = sizeof(BYTE),
++        [IsIntegrated] = sizeof(BYTE),
++        [IsDetachable] = sizeof(BYTE),
+     };
+ 
+     switch (property)
+@@ -124,6 +151,8 @@ static HRESULT dxcore_adapter_get_property_size(struct dxcore_adapter *adapter,
+         case DedicatedSystemMemory:
+         case SharedSystemMemory:
+         case IsHardware:
++        case IsIntegrated:
++        case IsDetachable:
+             *size = property_sizes[property];
+             return S_OK;
+         case DriverDescription:
+@@ -198,6 +227,15 @@ static HRESULT STDMETHODCALLTYPE dxcore_adapter_GetProperty(IDXCoreAdapter *ifac
+             *(BYTE *)buffer = 1;
+             break;
+ 
++        case IsIntegrated:
++            /* Intel adapters are integrated, everything else is treated as discrete. */
++            *(BYTE *)buffer = adapter->identifier.vendor_id == 0x8086;
++            break;
++
++        case IsDetachable:
++            *(BYTE *)buffer = 0;
++            break;
++
+         case DriverDescription:
+         {
+             memcpy(buffer, adapter->identifier.description, size);

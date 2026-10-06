@@ -1,0 +1,44 @@
+name: Compatibility report
+description: Tell us how AdobeWine runs on your system (works, partly works, or not)
+title: "[compat] <app> on <distribution> / <GPU>"
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Tip: `adobewine report --note "..."` fills most of this in automatically.
+  - type: input
+    id: distro
+    attributes: { label: Distribution and version, placeholder: "Fedora 42 / Ubuntu 24.04 / Arch" }
+    validations: { required: true }
+  - type: input
+    id: gpu
+    attributes: { label: GPU and driver version, placeholder: "RX 7800 XT, Mesa 25.2 / RTX 3060, NVIDIA 580" }
+    validations: { required: true }
+  - type: input
+    id: desktop
+    attributes: { label: Desktop and session, placeholder: "GNOME 48 Wayland" }
+  - type: input
+    id: version
+    attributes: { label: AdobeWine version, placeholder: "0.1.0 (adobewine-bin)" }
+  - type: checkboxes
+    id: apps
+    attributes:
+      label: Apps tested
+      options:
+        - label: Creative Cloud desktop
+        - label: Photoshop
+        - label: Illustrator
+        - label: Premiere Pro
+        - label: Media Encoder
+        - label: Audition
+        - label: Other (say which below)
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options: [Works well, Works with problems, Starts but unusable, Does not start]
+    validations: { required: true }
+  - type: textarea
+    id: details
+    attributes: { label: What you did and what happened, description: "Which features you tried, what worked, what did not." }

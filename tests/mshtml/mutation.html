@@ -1,0 +1,43 @@
+<html><head><meta http-equiv="X-UA-Compatible" content="IE=edge">
+<script>
+var out = [];
+function done() { document.title = out.join(" | "); }
+function unused() {
+    var fso = new ActiveXObject("Scripting.FileSystemObject");
+    var f = fso.CreateTextFile("Z:\\m2\\AdobeWine\\wine\\tests\\mshtml\\mutation.out", true);
+    f.WriteLine(out.join("\n")); f.Close(); window.close();
+}
+window.onload = function() {
+    setTimeout(done, 800);
+    try {
+    out.push("mode " + document.documentMode + " MO " + typeof MutationObserver);
+    // 1. core-js microtask pattern: detached text node, characterData
+    var n = document.createTextNode(""), toggled = false;
+    new MutationObserver(function(recs, obs) {
+        out.push("characterData: " + recs.length + " " + recs[0].type + " target==node " + (recs[0].target === n) + " obs " + (typeof obs.observe));
+    }).observe(n, { characterData: true });
+    n.data = toggled = !toggled;
+    // 2. childList on body, subtree attributes
+    var mo = new MutationObserver(function(recs) {
+        var s = [];
+        for (var i = 0; i < recs.length; i++)
+            s.push(recs[i].type + (recs[i].attributeName ? "(" + recs[i].attributeName + ")" : "") + "+" + recs[i].addedNodes.length + "-" + recs[i].removedNodes.length);
+        out.push("body: " + s.join(","));
+        mo.disconnect();
+    });
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true });
+    var d = document.createElement("div");
+    document.body.appendChild(d);
+    d.setAttribute("data-x", "1");
+    document.body.removeChild(d);
+    // 3. core-js-like microtask queue
+    var q = [], tn = document.createTextNode(""), flip = false;
+    new MutationObserver(function() { while (q.length) q.shift()(); }).observe(tn, { characterData: true });
+    function micro(fn) { q.push(fn); tn.data = flip = !flip; }
+    micro(function() { out.push("microtask ran"); });
+    // 4. empty options must throw
+    try { new MutationObserver(function(){}).observe(document.body, {}); out.push("empty options: no error"); }
+    catch (e) { out.push("empty options: error"); }
+    } catch (e) { out.push("exception " + e.message); }
+};
+</script></head><body>test</body></html>

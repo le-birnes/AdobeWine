@@ -1,0 +1,49 @@
+--- a/dlls/ntdll/heap.c	2026-10-03 00:18:45.309238183 -0300
++++ b/dlls/ntdll/heap.c	2026-10-03 00:18:45.309796394 -0300
+@@ -1107,6 +1107,31 @@
+ }
+ 
+ 
++/* The subheap of a free-list block, or NULL when its header has been overwritten (it then
++ * points outside any mapped subheap). Some apps (CCX node.exe, Creative Cloud Helper) write
++ * past their allocations; Windows tolerates that, but faulting here would leave the heap
++ * lock held and deadlock every thread of the process. */
++static SUBHEAP *free_block_get_subheap( const struct heap *heap, const struct block *block )
++{
++    SUBHEAP *subheap;
++
++    __TRY
++    {
++        const char *first, *last;
++        subheap = block_get_subheap( heap, block );
++        first = first_block( subheap );
++        last = last_block( subheap );
++        if (!contains( first, last - first, block, sizeof(*block) )) subheap = NULL;
++    }
++    __EXCEPT_PAGE_FAULT
++    {
++        subheap = NULL;
++    }
++    __ENDTRY
++
++    return subheap;
++}
++
+ static struct block *find_free_block( struct heap *heap, ULONG flags, SIZE_T block_size )
+ {
+     struct list *ptr = &find_free_list( heap, block_size, FALSE )->entry;
+@@ -1124,7 +1149,13 @@
+         if (block_get_flags( block ) == BLOCK_FLAG_FREE_LINK) continue;
+         if (block_get_size( block ) >= block_size)
+         {
+-            if (!subheap_commit( heap, block_get_subheap( heap, block ), block, block_size )) return NULL;
++            if (!(subheap = free_block_get_subheap( heap, block )))
++            {
++                /* Leave it linked: its neighbours may be just as broken. */
++                WARN( "heap %p: skipping corrupted free block %p (size %#Ix)\n", heap, block, block_get_size( block ) );
++                continue;
++            }
++            if (!subheap_commit( heap, subheap, block, block_size )) return NULL;
+             list_remove( &entry->entry );
+             return block;
+         }

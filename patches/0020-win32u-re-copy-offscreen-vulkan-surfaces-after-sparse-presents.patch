@@ -1,0 +1,135 @@
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 261c10c..d100652 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -137,11 +137,14 @@ static inline struct device_memory *device_memory_from_handle( VkDeviceMemory ha
+     return CONTAINING_RECORD( obj, struct device_memory, obj );
+ }
+ 
++struct swapchain;
++
+ struct surface
+ {
+     struct vulkan_surface obj;
+     struct client_surface *client;
+     HWND hwnd;
++    struct swapchain *swapchain;  /* most recent swapchain */
+ };
+ 
+ static struct surface *surface_from_handle( VkSurfaceKHR handle )
+@@ -155,6 +158,7 @@ struct swapchain
+     struct vulkan_swapchain obj;
+     struct surface *surface;
+     VkExtent2D extents;
++    DWORD last_present;  /* tick count of the previous present, for offscreen re-copies */
+ };
+ 
+ static struct swapchain *swapchain_from_handle( VkSwapchainKHR handle )
+@@ -1858,9 +1862,11 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+     if (get_surface_rect( surface->hwnd, &client_rect, raw_dpi ) &&
+         !extents_equals( &create_info_host.imageExtent, &client_rect ) &&
+         instance->extensions.has_VK_EXT_surface_maintenance1 &&
+-        physical_device->extensions.has_VK_KHR_swapchain_maintenance1)
++        (device->extensions.has_VK_EXT_swapchain_maintenance1 ||
++         physical_device->extensions.has_VK_KHR_swapchain_maintenance1))
+     {
+         scaling.scalingBehavior = VK_PRESENT_SCALING_STRETCH_BIT_EXT;
++        scaling.pNext = create_info_host.pNext;  /* keep the app's chain */
+         create_info_host.pNext = &scaling;
+     }
+ 
+@@ -1875,6 +1881,13 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+     vulkan_object_init( &swapchain->obj.obj, host_swapchain );
+     swapchain->surface = surface;
+     swapchain->extents = create_info->imageExtent;
++    /* An offscreen client window keeps the size of the swapchain images until the swapchain
++     * is recreated; the copy to the toplevel stretches it to the window, as DXGI does. Without
++     * this, resizing the window makes the host present fail with VK_ERROR_OUT_OF_DATE_KHR, and
++     * apps that only present on changes (D2D UIs through DXVK) lose that frame for good. */
++    surface->swapchain = swapchain;
++    surface->client->buffer_size.cx = create_info_host.imageExtent.width;
++    surface->client->buffer_size.cy = create_info_host.imageExtent.height;
+     instance->p_insert_object( instance, &swapchain->obj.obj );
+ 
+     *ret = swapchain->obj.client.swapchain;
+@@ -1893,6 +1906,11 @@ static void win32u_vkDestroySwapchainKHR( VkDevice client_device, VkSwapchainKHR
+ 
+     device->p_vkDestroySwapchainKHR( device->host.device, swapchain->obj.host.swapchain, NULL );
+     instance->p_remove_object( instance, &swapchain->obj.obj );
++    if (swapchain->surface->swapchain == swapchain)
++    {
++        swapchain->surface->swapchain = NULL;
++        swapchain->surface->client->buffer_size.cx = swapchain->surface->client->buffer_size.cy = 0;
++    }
+ 
+     free( swapchain );
+ }
+@@ -2018,6 +2036,68 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+         }
+     }
+ 
++    /* Offscreen surfaces are copied to their toplevel right after the host present, but the
++     * host driver may complete the present asynchronously, so that copy can pick up the
++     * previous frame. An app that only presents on change then stays one frame behind for
++     * good. When the app tags its presents with present ids (DXVK and vkd3d-proton do),
++     * wait for that present to complete and copy again; otherwise, when presents are
++     * sparse, copy once more after a short wait. */
++    if (res >= VK_SUCCESS)
++    {
++        const VkPresentIdKHR *ids = NULL;
++        const VkPresentId2KHR *ids2 = NULL;
++        const VkBaseInStructure *next;
++        static int delay_us = -1;
++        DWORD now = NtGetTickCount();
++        BOOL recopy = FALSE;
++
++        for (next = present_info->pNext; next; next = next->pNext)
++        {
++            if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) ids = (const VkPresentIdKHR *)next;
++            else if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) ids2 = (const VkPresentId2KHR *)next;
++        }
++
++        for (uint32_t i = 0; i < present_info->swapchainCount; i++)
++        {
++            struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
++            uint64_t id = 0;
++            BOOL waited = FALSE;
++
++            if (!swapchain->surface->client->offscreen) continue;
++            if (ids && i < ids->swapchainCount && ids->pPresentIds) id = ids->pPresentIds[i];
++            else if (ids2 && i < ids2->swapchainCount && ids2->pPresentIds) id = ids2->pPresentIds[i];
++
++            if (id && device->extensions.has_VK_KHR_present_wait && device->p_vkWaitForPresentKHR)
++                waited = device->p_vkWaitForPresentKHR( device->host.device, present_info->pSwapchains[i], id,
++                                                        100000000 ) == VK_SUCCESS;
++            else if (id && device->extensions.has_VK_KHR_present_wait2 && device->p_vkWaitForPresent2KHR)
++            {
++                VkPresentWait2InfoKHR info = {.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR,
++                                              .presentId = id, .timeout = 100000000};
++                waited = device->p_vkWaitForPresent2KHR( device->host.device, present_info->pSwapchains[i], &info ) == VK_SUCCESS;
++            }
++
++            if (waited) client_surface_present( swapchain->surface->client );
++            if (now - swapchain->last_present > 25) recopy = TRUE;
++            swapchain->last_present = now;
++        }
++        if (delay_us < 0)
++        {
++            const char *env = getenv( "WINE_OFFSCREEN_RECOPY_US" );
++            delay_us = env ? atoi( env ) : 10000;
++        }
++        if (recopy && delay_us)
++        {
++            device->p_vkQueueWaitIdle( queue->host.queue );
++            usleep( delay_us );
++            for (uint32_t i = 0; i < present_info->swapchainCount; i++)
++            {
++                struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
++                if (swapchain->surface->client->offscreen) client_surface_present( swapchain->surface->client );
++            }
++        }
++    }
++
+     if (swapchains != swapchains_buffer) free( swapchains );
+ 
+     if (TRACE_ON( fps ))

@@ -1,0 +1,242 @@
+diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
+index 75a0daa..9165c67 100644
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -907,6 +907,22 @@ static struct block *heap_delay_free( struct heap *heap, ULONG flags, struct blo
+ }
+ 
+ 
++static BOOL release_empty_subheaps(void)
++{
++    static int release = -1;
++
++    if (release < 0)
++    {
++        WCHAR buffer[8];
++        UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINE_HEAP_RELEASE_SUBHEAPS" ), value;
++
++        value.Buffer = buffer;
++        value.MaximumLength = sizeof(buffer);
++        release = !RtlQueryEnvironmentVariable_U( NULL, &name, &value ) && buffer[0] == '1';
++    }
++    return release;
++}
++
+ static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *block )
+ {
+     SUBHEAP *subheap = block_get_subheap( heap, block );
+@@ -932,7 +948,12 @@ static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *b
+         block = &entry->block;
+     }
+ 
+-    if (block == first_block( subheap ) && !next && subheap != &heap->subheap)
++    /* Empty subheaps are kept (decommitted below) rather than released: apps that free a
++     * pointer twice, which Windows tolerates since it rarely releases heap segments, would
++     * otherwise touch unmapped memory or a reused range and corrupt the heap. With the range
++     * still mapped, the second free is caught as an invalid block. Set
++     * WINE_HEAP_RELEASE_SUBHEAPS=1 for the old behaviour. */
++    if (block == first_block( subheap ) && !next && subheap != &heap->subheap && release_empty_subheaps())
+     {
+         /* free the subheap if it's empty and not the main one */
+         void *addr = subheap_base( subheap );
+@@ -1132,34 +1153,107 @@ static SUBHEAP *free_block_get_subheap( const struct heap *heap, const struct bl
+     return subheap;
+ }
+ 
+-static struct block *find_free_block( struct heap *heap, ULONG flags, SIZE_T block_size )
++/* Rebuild the free lists from the block headers of every subheap. Used when walking the
++ * lists faulted: an app wrote to freed memory (use after free) and broke a list link. The
++ * block headers are authoritative; a subheap whose headers are broken is left out. */
++static void heap_rebuild_free_lists( struct heap *heap )
+ {
+-    struct list *ptr = &find_free_list( heap, block_size, FALSE )->entry;
+     struct entry *entry;
+-    struct block *block;
+-    SIZE_T total_size;
+     SUBHEAP *subheap;
++    unsigned int i;
+ 
+-    /* Find a suitable free list, and in it find a block large enough */
++    ERR( "heap %p: free lists corrupted (use after free in the app?), rebuilding them\n", heap );
++
++    list_init( &heap->free_lists[0].entry );
++    for (i = 1, entry = heap->free_lists + 1; i < FREE_LIST_COUNT; i++, entry++)
++        list_add_after( &entry[-1].entry, &entry->entry );
+ 
+-    while ((ptr = list_next( &heap->free_lists[0].entry, ptr )))
++    LIST_FOR_EACH_ENTRY( subheap, &heap->subheap_list, SUBHEAP, entry )
+     {
+-        entry = LIST_ENTRY( ptr, struct entry, entry );
+-        block = &entry->block;
+-        if (block_get_flags( block ) == BLOCK_FLAG_FREE_LINK) continue;
+-        if (block_get_size( block ) >= block_size)
++        __TRY
++        {
++            const char *base = subheap_base( subheap ), *end = base + subheap_size( subheap );
++            struct block *block = first_block( subheap ), *next;
++
++            for (; block; block = next)
++            {
++                SIZE_T size = block_get_size( block );
++
++                if (size < sizeof(struct block) || (char *)block + size > end) break;
++                next = next_block( subheap, block );
++                if ((block_get_flags( block ) & BLOCK_FLAG_FREE) && block_get_type( block ) == BLOCK_TYPE_FREE)
++                {
++                    struct entry *free_entry = (struct entry *)block, *list = find_free_list( heap, size, !next );
++                    if (!next) list_add_before( &list->entry, &free_entry->entry );
++                    else list_add_after( &list->entry, &free_entry->entry );
++                }
++            }
++        }
++        __EXCEPT_PAGE_FAULT
+         {
+-            if (!(subheap = free_block_get_subheap( heap, block )))
++            WARN( "heap %p: subheap %p has broken block headers\n", heap, subheap );
++        }
++        __ENDTRY
++    }
++}
++
++/* Search the free lists; *fault is set if a list link pointed to unmapped memory. */
++static struct block *search_free_lists( struct heap *heap, SIZE_T block_size, BOOL *fault )
++{
++    struct block *found = NULL;
++
++    *fault = FALSE;
++    __TRY
++    {
++        struct list *ptr = &find_free_list( heap, block_size, FALSE )->entry;
++
++        while (!found && (ptr = list_next( &heap->free_lists[0].entry, ptr )))
++        {
++            struct entry *entry = LIST_ENTRY( ptr, struct entry, entry );
++            struct block *block = &entry->block;
++
++            if (block_get_flags( block ) == BLOCK_FLAG_FREE_LINK) continue;
++            if (block_get_size( block ) < block_size) continue;
++            if (!free_block_get_subheap( heap, block ))
+             {
+                 /* Leave it linked: its neighbours may be just as broken. */
+                 WARN( "heap %p: skipping corrupted free block %p (size %#Ix)\n", heap, block, block_get_size( block ) );
+                 continue;
+             }
+-            if (!subheap_commit( heap, subheap, block, block_size )) return NULL;
+-            list_remove( &entry->entry );
+-            return block;
++            found = block;
+         }
+     }
++    __EXCEPT_PAGE_FAULT
++    {
++        *fault = TRUE;
++        found = NULL;
++    }
++    __ENDTRY
++
++    return found;
++}
++
++static struct block *find_free_block( struct heap *heap, ULONG flags, SIZE_T block_size )
++{
++    struct block *block;
++    SIZE_T total_size;
++    SUBHEAP *subheap;
++    BOOL fault;
++
++    /* Find a suitable free list, and in it find a block large enough */
++
++    block = search_free_lists( heap, block_size, &fault );
++    if (fault)
++    {
++        heap_rebuild_free_lists( heap );
++        block = search_free_lists( heap, block_size, &fault );
++    }
++    if (block)
++    {
++        if (!subheap_commit( heap, free_block_get_subheap( heap, block ), block, block_size )) return NULL;
++        list_remove( &((struct entry *)block)->entry );
++        return block;
++    }
+ 
+     /* make sure we can fit the block and a free entry at the end */
+     total_size = sizeof(SUBHEAP) + block_size + sizeof(struct entry);
+@@ -2081,6 +2175,60 @@ void heap_thread_detach(void)
+ /***********************************************************************
+  *           RtlAllocateHeap   (NTDLL.@)
+  */
++/* Allocation / free with the heap lock held, made fault-safe: an app that writes to freed
++ * memory can break free-list links, and a fault here would kill the thread with the heap
++ * lock held, deadlocking the whole process (seen in Creative Cloud's helpers). On a fault
++ * the free lists are rebuilt from the block headers and the allocation is retried once; a
++ * free that faults leaves the block allocated (leaked) instead. */
++static NTSTATUS heap_allocate_block_guarded( struct heap *heap, ULONG flags, SIZE_T block_size, SIZE_T size, void **ret )
++{
++    NTSTATUS status = STATUS_NO_MEMORY;
++    BOOL fault = FALSE;
++    int attempt;
++
++    for (attempt = 0; attempt < 2; attempt++)
++    {
++        __TRY
++        {
++            status = heap_allocate_block( heap, flags, block_size, size, ret );
++            fault = FALSE;
++        }
++        __EXCEPT_PAGE_FAULT
++        {
++            fault = TRUE;
++        }
++        __ENDTRY
++        if (!fault) break;
++        heap_rebuild_free_lists( heap );
++        status = STATUS_NO_MEMORY;
++        *ret = NULL;
++    }
++    return status;
++}
++
++static NTSTATUS heap_free_block_guarded( struct heap *heap, ULONG flags, struct block *block )
++{
++    NTSTATUS status = STATUS_SUCCESS;
++    BOOL fault = FALSE;
++
++    __TRY
++    {
++        status = heap_free_block( heap, flags, block );
++    }
++    __EXCEPT_PAGE_FAULT
++    {
++        fault = TRUE;
++    }
++    __ENDTRY
++    if (fault)
++    {
++        WARN( "heap %p: fault while freeing block %p, leaking it\n", heap, block );
++        heap_rebuild_free_lists( heap );
++        status = STATUS_SUCCESS;
++    }
++    return status;
++}
++
+ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE_T size )
+ {
+     struct heap *heap;
+@@ -2099,7 +2247,7 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE
+     else
+     {
+         heap_lock( heap, heap_flags );
+-        status = heap_allocate_block( heap, heap_flags, block_size, size, &ptr );
++        status = heap_allocate_block_guarded( heap, heap_flags, block_size, size, &ptr );
+         heap_unlock( heap, heap_flags );
+ 
+         if (!status && heap->bins)
+@@ -2147,7 +2295,7 @@ BOOLEAN WINAPI DECLSPEC_HOTPATCH RtlFreeHeap( HANDLE handle, ULONG flags, void *
+         SIZE_T block_size = block_get_size( block ), bin = BLOCK_SIZE_BIN( block_size );
+ 
+         heap_lock( heap, heap_flags );
+-        status = heap_free_block( heap, heap_flags, block );
++        status = heap_free_block_guarded( heap, heap_flags, block );
+         heap_unlock( heap, heap_flags );
+ 
+         if (!status && heap->bins) InterlockedIncrement( &heap->bins[bin].count_freed );

@@ -1,0 +1,16 @@
+name: Bug report
+description: Something does not work
+title: "[bug] <app>: <short description>"
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please attach the output of `adobewine report` (personal data is removed and you can review it). Never paste access tokens or Adobe account details.
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: Steps to reproduce, expected and actual result }
+    validations: { required: true }
+  - type: textarea
+    id: report
+    attributes: { label: adobewine report output (or system details), render: markdown }

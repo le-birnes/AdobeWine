@@ -1,0 +1,136 @@
+diff --git a/dlls/dxgi/dxgi_private.h b/dlls/dxgi/dxgi_private.h
+index ed82d36..41efb66 100644
+--- a/dlls/dxgi/dxgi_private.h
++++ b/dlls/dxgi/dxgi_private.h
+@@ -185,8 +185,11 @@ struct d3d11_swapchain
+     IDXGIOutput *target;
+     LONG present_count;
+     LONG in_set_fullscreen_state;
++    HWND composition_window;
+ };
+ 
++BOOL d3d11_swapchain_set_composition_window(IDXGISwapChain1 *iface, HWND window);
++
+ HRESULT d3d11_swapchain_init(struct d3d11_swapchain *swapchain, struct dxgi_device *device,
+         struct wined3d_swapchain_desc *desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fullscreen_desc);
+ 
+diff --git a/dlls/dxgi/factory.c b/dlls/dxgi/factory.c
+index c6bb47f..09f68f5 100644
+--- a/dlls/dxgi/factory.c
++++ b/dlls/dxgi/factory.c
+@@ -390,10 +390,29 @@ static void STDMETHODCALLTYPE dxgi_factory_UnregisterOcclusionStatus(IWineDXGIFa
+ static HRESULT STDMETHODCALLTYPE dxgi_factory_CreateSwapChainForComposition(IWineDXGIFactory *iface,
+         IUnknown *device, const DXGI_SWAP_CHAIN_DESC1 *desc, IDXGIOutput *output, IDXGISwapChain1 **swapchain)
+ {
+-    FIXME("iface %p, device %p, desc %p, output %p, swapchain %p stub!\n",
++    HWND window;
++    HRESULT hr;
++
++    TRACE("iface %p, device %p, desc %p, output %p, swapchain %p.\n",
+             iface, device, desc, output, swapchain);
+ 
+-    return E_NOTIMPL;
++    if (!device || !desc || !swapchain)
++        return DXGI_ERROR_INVALID_CALL;
++
++    /* The swapchain renders to a hidden window until DirectComposition attaches it
++     * to a target window; presents then go to that window. */
++    if (!(window = CreateWindowExW(0, L"static", NULL, WS_POPUP, 0, 0, max(desc->Width, 1),
++            max(desc->Height, 1), NULL, NULL, NULL, NULL)))
++        return E_FAIL;
++
++    if (FAILED(hr = IWineDXGIFactory_CreateSwapChainForHwnd(iface, device, window, desc, NULL, output, swapchain)))
++    {
++        DestroyWindow(window);
++        return hr;
++    }
++    if (!d3d11_swapchain_set_composition_window(*swapchain, window))
++        FIXME("Composition is not supported for this swapchain type.\n");
++    return S_OK;
+ }
+ 
+ static UINT STDMETHODCALLTYPE dxgi_factory_GetCreationFlags(IWineDXGIFactory *iface)
+diff --git a/dlls/dxgi/swapchain.c b/dlls/dxgi/swapchain.c
+index 1186527..7d30ddb 100644
+--- a/dlls/dxgi/swapchain.c
++++ b/dlls/dxgi/swapchain.c
+@@ -24,6 +24,10 @@
+ #include "wine/vulkan.h"
+ #include <vkd3d.h>
+ 
++/* Private data a composition swapchain reads its target window from; dcomp sets it on Commit(). */
++static const GUID WINE_DXGI_COMPOSITION_TARGET =
++        {0x6b1f3a52, 0x9c0e, 0x4d8b, {0xa6, 0x41, 0x2f, 0x5c, 0x7e, 0x13, 0x88, 0xd4}};
++
+ WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
+ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+ 
+@@ -256,6 +260,8 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain4 *iface)
+     if (!refcount)
+     {
+         IWineDXGIDevice *device = swapchain->device;
++        HWND composition_window = swapchain->composition_window;
++
+         if (swapchain->target)
+         {
+             WARN("Releasing fullscreen swapchain.\n");
+@@ -264,6 +270,8 @@ static ULONG STDMETHODCALLTYPE d3d11_swapchain_Release(IDXGISwapChain4 *iface)
+         IWineDXGIFactory_Release(swapchain->factory);
+         wined3d_swapchain_decref(swapchain->wined3d_swapchain);
+         IWineDXGIDevice_Release(device);
++        if (composition_window)
++            DestroyWindow(composition_window);
+     }
+ 
+     return refcount;
+@@ -326,6 +334,7 @@ static HRESULT STDMETHODCALLTYPE d3d11_swapchain_GetDevice(IDXGISwapChain4 *ifac
+ static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
+         unsigned int sync_interval, unsigned int flags)
+ {
++    HWND target = NULL;
+     HRESULT hr;
+ 
+     if (sync_interval > 4)
+@@ -334,7 +343,17 @@ static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
+         return DXGI_ERROR_INVALID_CALL;
+     }
+ 
+-    if (IsIconic(d3d11_swapchain_get_hwnd(swapchain)))
++    if (swapchain->composition_window)
++    {
++        UINT size = sizeof(target);
++
++        /* Not attached to a window by a DirectComposition Commit() yet. */
++        if (FAILED(IDXGISwapChain4_GetPrivateData(&swapchain->IDXGISwapChain4_iface,
++                &WINE_DXGI_COMPOSITION_TARGET, &size, &target)) || !target || !IsWindow(target))
++            return S_OK;
++    }
++
++    if (IsIconic(target ? target : d3d11_swapchain_get_hwnd(swapchain)))
+         return DXGI_STATUS_OCCLUDED;
+ 
+     if (flags & ~(DXGI_PRESENT_TEST | DXGI_PRESENT_ALLOW_TEARING))
+@@ -345,7 +364,7 @@ static HRESULT d3d11_swapchain_present(struct d3d11_swapchain *swapchain,
+         return S_OK;
+     }
+ 
+-    if (SUCCEEDED(hr = wined3d_swapchain_present(swapchain->wined3d_swapchain, NULL, NULL, NULL, sync_interval, 0)))
++    if (SUCCEEDED(hr = wined3d_swapchain_present(swapchain->wined3d_swapchain, NULL, NULL, target, sync_interval, 0)))
+         InterlockedIncrement(&swapchain->present_count);
+     return hr;
+ }
+@@ -3499,3 +3518,14 @@ HRESULT d3d12_swapchain_create(IWineDXGIFactory *factory, ID3D12CommandQueue *qu
+ 
+     return S_OK;
+ }
++
++BOOL d3d11_swapchain_set_composition_window(IDXGISwapChain1 *iface, HWND window)
++{
++    struct d3d11_swapchain *swapchain;
++
++    if (iface->lpVtbl != (const IDXGISwapChain1Vtbl *)&d3d11_swapchain_vtbl)
++        return FALSE;
++    swapchain = d3d11_swapchain_from_IDXGISwapChain4((IDXGISwapChain4 *)iface);
++    swapchain->composition_window = window;
++    return TRUE;
++}

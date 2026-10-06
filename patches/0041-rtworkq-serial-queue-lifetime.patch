@@ -1,0 +1,85 @@
+rtworkq: Keep a serial queue alive until its last finalization callback has run.
+
+The finalization callback of an item dispatched from a serial queue runs on the
+target pool after the work and takes the serial queue lock. When the serial queue
+was unlocked meanwhile, it had been shut down, zeroed and freed, so the callback
+waited forever on a zeroed critical section, and MFShutdown waited forever for
+the callback (Photoshop 2026 hung on exit). Reproducer: wine/tests/rtworkq/serialexit.c.
+
+diff --git a/dlls/rtworkq/queue.c b/dlls/rtworkq/queue.c
+index ce37cc7..c8df1a0 100644
+--- a/dlls/rtworkq/queue.c
++++ b/dlls/rtworkq/queue.c
+@@ -198,8 +198,18 @@ struct queue
+     /* Data used for serial queues only. */
+     PTP_SIMPLE_CALLBACK finalization_callback;
+     DWORD target_queue;
++    /* User queues only: the handle's reference plus one per item dispatched with a
++     * finalization callback, which still uses the queue after its work has run. */
++    LONG refcount;
+ };
+ 
++static void release_queue(struct queue *queue)
++{
++    if (InterlockedDecrement(&queue->refcount)) return;
++    DeleteCriticalSection(&queue->cs);
++    free(queue);
++}
++
+ static void shutdown_queue(struct queue *queue);
+ 
+ static HRESULT lock_user_queue(DWORD queue)
+@@ -250,7 +260,7 @@ static HRESULT unlock_user_queue(DWORD queue)
+     if (obj)
+     {
+         shutdown_queue(obj);
+-        free(obj);
++        release_queue(obj);
+     }
+     return hr;
+ }
+@@ -418,7 +428,12 @@ static void pool_queue_submit(struct queue *queue, struct work_item *item)
+     /* Worker pool callback will release one reference. Grab one more to keep object alive when
+        we need finalization callback. */
+     if (item->finalization_callback)
++    {
+         IUnknown_AddRef(&item->IUnknown_iface);
++        /* The finalization callback runs on this pool after the work, and may do so after
++         * the serial queue was unlocked: keep the serial queue alive until then. */
++        InterlockedIncrement(&item->queue->refcount);
++    }
+     item->u.work_object = CreateThreadpoolWork(standard_queue_worker, item, (TP_CALLBACK_ENVIRON *)&env);
+     item->type = WORK_ITEM_WORK;
+     SubmitThreadpoolWork(item->u.work_object);
+@@ -463,6 +478,7 @@ static void CALLBACK serial_queue_finalization_callback(PTP_CALLBACK_INSTANCE in
+     LeaveCriticalSection(&queue->cs);
+ 
+     IUnknown_Release(&item->IUnknown_iface);
++    release_queue(queue);
+ }
+ 
+ static HRESULT serial_queue_init(const struct queue_desc *desc, struct queue *queue)
+@@ -703,10 +719,15 @@ static void shutdown_queue(struct queue *queue)
+     LIST_FOR_EACH_ENTRY_SAFE(item, item2, &queue->pending_items, struct work_item, entry)
+     {
+         list_remove(&item->entry);
++        /* an item still in flight removes itself again in the finalization callback */
++        list_init(&item->entry);
+         IUnknown_Release(&item->IUnknown_iface);
+     }
+     LeaveCriticalSection(&queue->cs);
+ 
++    /* User queues are freed by their last reference (release_queue). */
++    if (queue->refcount) return;
++
+     DeleteCriticalSection(&queue->cs);
+ 
+     memset(queue, 0, sizeof(*queue));
+@@ -984,6 +1005,7 @@ static HRESULT alloc_user_queue(const struct queue_desc *desc, DWORD *queue_id)
+     if (!(queue = calloc(1, sizeof(*queue))))
+         return E_OUTOFMEMORY;
+ 
++    queue->refcount = 1;
+     init_work_queue(desc, queue);
+ 
+     EnterCriticalSection(&queues_section);

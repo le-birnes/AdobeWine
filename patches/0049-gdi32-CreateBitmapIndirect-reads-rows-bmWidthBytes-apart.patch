@@ -1,0 +1,35 @@
+diff --git a/dlls/gdi32/objects.c b/dlls/gdi32/objects.c
+index f2b353c..a0e155f 100644
+--- a/dlls/gdi32/objects.c
++++ b/dlls/gdi32/objects.c
+@@ -594,6 +594,30 @@ HBITMAP WINAPI CreateBitmapIndirect( const BITMAP *bmp )
+         return NULL;
+     }
+ 
++    if (bmp->bmWidth && bmp->bmHeight)
++    {
++        /* the source rows are bmWidthBytes apart; it must be even and hold a row */
++        INT stride = ((abs( bmp->bmWidth ) * bmp->bmBitsPixel * bmp->bmPlanes + 15) >> 3) & ~1;
++        INT rows = abs( bmp->bmHeight ), y;
++        HBITMAP ret;
++        char *bits;
++
++        if (bmp->bmWidthBytes < stride || (bmp->bmWidthBytes & 1))
++        {
++            SetLastError( ERROR_INVALID_PARAMETER );
++            return NULL;
++        }
++        if (bmp->bmBits && bmp->bmWidthBytes != stride)
++        {
++            if (!(bits = malloc( (SIZE_T)stride * rows ))) return NULL;
++            for (y = 0; y < rows; y++)
++                memcpy( bits + (SIZE_T)y * stride, (const char *)bmp->bmBits + (SIZE_T)y * bmp->bmWidthBytes, stride );
++            ret = CreateBitmap( bmp->bmWidth, bmp->bmHeight, bmp->bmPlanes, bmp->bmBitsPixel, bits );
++            free( bits );
++            return ret;
++        }
++    }
++
+     return CreateBitmap( bmp->bmWidth, bmp->bmHeight, bmp->bmPlanes,
+                          bmp->bmBitsPixel, bmp->bmBits );
+ }

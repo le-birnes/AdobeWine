@@ -1,0 +1,54 @@
+diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
+index acdd27d..1c48892 100644
+--- a/dlls/winhttp/request.c
++++ b/dlls/winhttp/request.c
+@@ -2750,6 +2750,26 @@ static DWORD handle_authorization( struct request *request, DWORD status )
+     return ERROR_WINHTTP_LOGIN_FAILURE;
+ }
+ 
++/* remove a header line from the stored raw response headers */
++static void remove_raw_header( struct request *request, const WCHAR *field )
++{
++    WCHAR *line, *next;
++    size_t len = wcslen( field );
++
++    if (!request->raw_headers) return;
++    /* the first line is the status line; header lines follow "\r\n" */
++    for (line = wcsstr( request->raw_headers, L"\r\n" ); line; line = next)
++    {
++        line += 2;
++        if (!(next = wcsstr( line, L"\r\n" ))) break;
++        if (!wcsnicmp( line, field, len ) && line[len] == ':')
++        {
++            memmove( line, next + 2, (wcslen( next + 2 ) + 1) * sizeof(WCHAR) );
++            next = line - 2;
++        }
++    }
++}
++
+ static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
+ {
+     struct gzip_stream *gzip_stream;
+@@ -2779,7 +2799,11 @@ static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
+     gzip_stream->parent = request->data_stream;
+     request->data_stream = &gzip_stream->data_stream;
+ 
++    /* the decompressed body is longer: hide the compressed length everywhere, including the
++     * raw headers that clients such as cpprestsdk parse (Adobe GrowthSDK sized its buffer
++     * from it and overran the heap with the decompressed data) */
+     remove_header( request, L"Content-Length", FALSE );
++    remove_raw_header( request, L"Content-Length" );
+     request->content_length = ~0ull;
+     return ERROR_SUCCESS;
+ }
+@@ -3531,6 +3555,10 @@ static DWORD read_data( struct request *request, char *buffer, DWORD size, DWORD
+         if ((ret = read_data_stream( request, buffer + bytes_read, size, &count )) || !count) break;
+         bytes_read += count;
+         size -= count;
++        /* Like Windows, return what was available instead of waiting for more: callers
++         * size their buffers from WinHttpQueryDataAvailable (Adobe GrowthSDK asks for one
++         * byte more than reported and overran its buffer when it got it). */
++        if (!request->read.size) break;
+     }
+ 
+     TRACE( "%lu bytes read\n", bytes_read );

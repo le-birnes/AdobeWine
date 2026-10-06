@@ -1,0 +1,16 @@
+diff --git a/dlls/dwrite/layout.c b/dlls/dwrite/layout.c
+index 355e23c..4b017b0 100644
+--- a/dlls/dwrite/layout.c
++++ b/dlls/dwrite/layout.c
+@@ -910,8 +910,9 @@ static HRESULT layout_run_get_last_resort_font(const struct dwrite_textlayout *l
+     IDWriteFont *font;
+     HRESULT hr;
+ 
+-    if (FAILED(create_matching_font(range->collection, range->fontfamily, range->weight, range->style,
+-            range->stretch, &IID_IDWriteFont3, (void **)&font)))
++    /* A range without a collection uses the system collection, as in layout_resolve_fonts(). */
++    if (FAILED(create_matching_font(range->collection ? range->collection : layout->system_collection,
++            range->fontfamily, range->weight, range->style, range->stretch, &IID_IDWriteFont3, (void **)&font)))
+     {
+         if (FAILED(hr = create_matching_font(layout->system_collection, L"Tahoma", range->weight, range->style,
+                 range->stretch, &IID_IDWriteFont3, (void **)&font)))

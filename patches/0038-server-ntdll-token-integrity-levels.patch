@@ -1,0 +1,268 @@
+diff --git a/dlls/ntdll/unix/security.c b/dlls/ntdll/unix/security.c
+index 103fb9c..22ba0e4 100644
+--- a/dlls/ntdll/unix/security.c
++++ b/dlls/ntdll/unix/security.c
+@@ -624,16 +624,22 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
+ 
+     case TokenIntegrityLevel:
+         {
+-            /* report always "S-1-16-12288" (high mandatory level) for now */
+-            static const SID high_level = {SID_REVISION, 1, {SECURITY_MANDATORY_LABEL_AUTHORITY},
+-                                                            {SECURITY_MANDATORY_HIGH_RID}};
+-
++            SID level = {SID_REVISION, 1, {SECURITY_MANDATORY_LABEL_AUTHORITY}, {SECURITY_MANDATORY_HIGH_RID}};
+             TOKEN_MANDATORY_LABEL *tml = info;
+             PSID psid = tml + 1;
+ 
++            SERVER_START_REQ( get_token_info )
++            {
++                req->handle = wine_server_obj_handle( token );
++                status = wine_server_call( req );
++                if (!status && reply->integrity) level.SubAuthority[0] = reply->integrity;
++            }
++            SERVER_END_REQ;
++            if (status) break;
++
+             tml->Label.Sid = psid;
+             tml->Label.Attributes = SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED;
+-            memcpy( psid, &high_level, sizeof(SID) );
++            memcpy( psid, &level, sizeof(SID) );
+         }
+         break;
+ 
+@@ -730,9 +736,32 @@ NTSTATUS WINAPI NtSetInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS cla
+         break;
+ 
+     case TokenIntegrityLevel:
+-        FIXME( "TokenIntegrityLevel stub!\n" );
+-        ret = STATUS_SUCCESS;
++    {
++        const TOKEN_MANDATORY_LABEL *label = info;
++        const SID *sid;
++
++        if (length < sizeof(TOKEN_MANDATORY_LABEL) || !label->Label.Sid)
++        {
++            ret = STATUS_INVALID_PARAMETER;
++            break;
++        }
++        sid = label->Label.Sid;
++        if (sid->SubAuthorityCount < 1 ||
++            memcmp( &sid->IdentifierAuthority, &(SID_IDENTIFIER_AUTHORITY){SECURITY_MANDATORY_LABEL_AUTHORITY},
++                    sizeof(sid->IdentifierAuthority) ))
++        {
++            ret = STATUS_INVALID_SID;
++            break;
++        }
++        SERVER_START_REQ( set_token_integrity )
++        {
++            req->handle = wine_server_obj_handle( token );
++            req->integrity = sid->SubAuthority[sid->SubAuthorityCount - 1];
++            ret = wine_server_call( req );
++        }
++        SERVER_END_REQ;
+         break;
++    }
+ 
+     default:
+         FIXME( "unimplemented class %u\n", class );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+index e2ef2f5..d16cac3 100644
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -5511,7 +5511,21 @@ struct get_token_info_reply
+     int            is_elevated;
+     int            group_count;
+     int            privilege_count;
+-    char __pad_52[4];
++    unsigned int   integrity;
++};
++
++
++
++struct set_token_integrity_request
++{
++    struct request_header __header;
++    obj_handle_t   handle;
++    unsigned int   integrity;
++    char __pad_20[4];
++};
++struct set_token_integrity_reply
++{
++    struct reply_header __header;
+ };
+ 
+ 
+@@ -6509,6 +6523,7 @@ enum request
+     REQ_make_process_system,
+     REQ_grant_process_admin_token,
+     REQ_get_token_info,
++    REQ_set_token_integrity,
+     REQ_create_linked_token,
+     REQ_create_completion,
+     REQ_open_completion,
+@@ -6824,6 +6839,7 @@ union generic_request
+     struct make_process_system_request make_process_system_request;
+     struct grant_process_admin_token_request grant_process_admin_token_request;
+     struct get_token_info_request get_token_info_request;
++    struct set_token_integrity_request set_token_integrity_request;
+     struct create_linked_token_request create_linked_token_request;
+     struct create_completion_request create_completion_request;
+     struct open_completion_request open_completion_request;
+@@ -7137,6 +7153,7 @@ union generic_reply
+     struct make_process_system_reply make_process_system_reply;
+     struct grant_process_admin_token_reply grant_process_admin_token_reply;
+     struct get_token_info_reply get_token_info_reply;
++    struct set_token_integrity_reply set_token_integrity_reply;
+     struct create_linked_token_reply create_linked_token_reply;
+     struct create_completion_reply create_completion_reply;
+     struct open_completion_reply open_completion_reply;
+@@ -7184,6 +7201,6 @@ union generic_reply
+     struct alpc_create_port_reply alpc_create_port_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 962
++#define SERVER_PROTOCOL_VERSION 963
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
+diff --git a/server/protocol.def b/server/protocol.def
+index 59aaa22..d2f3089 100644
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3899,6 +3899,14 @@ struct handle_info
+     int            is_elevated;   /* is the token elevated as per GetTokenInformation(TokenElevation) */
+     int            group_count;   /* the number of groups the token is a member of */
+     int            privilege_count; /* the number of privileges the token has */
++    unsigned int   integrity;     /* mandatory integrity level RID */
++@END
++
++
++/* Set the mandatory integrity level of a token */
++@REQ(set_token_integrity)
++    obj_handle_t   handle;        /* handle to the token */
++    unsigned int   integrity;     /* mandatory integrity level RID */
+ @END
+ 
+ 
+diff --git a/server/request_handlers.h b/server/request_handlers.h
+index 950b1bb..925afa7 100644
+--- a/server/request_handlers.h
++++ b/server/request_handlers.h
+@@ -270,6 +270,7 @@ DECL_HANDLER(get_kernel_object_handle);
+ DECL_HANDLER(make_process_system);
+ DECL_HANDLER(grant_process_admin_token);
+ DECL_HANDLER(get_token_info);
++DECL_HANDLER(set_token_integrity);
+ DECL_HANDLER(create_linked_token);
+ DECL_HANDLER(create_completion);
+ DECL_HANDLER(open_completion);
+@@ -582,6 +583,7 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
+     (req_handler)req_make_process_system,
+     (req_handler)req_grant_process_admin_token,
+     (req_handler)req_get_token_info,
++    (req_handler)req_set_token_integrity,
+     (req_handler)req_create_linked_token,
+     (req_handler)req_create_completion,
+     (req_handler)req_open_completion,
+@@ -2161,7 +2163,11 @@ C_ASSERT( offsetof(struct get_token_info_reply, elevation_type) == 36 );
+ C_ASSERT( offsetof(struct get_token_info_reply, is_elevated) == 40 );
+ C_ASSERT( offsetof(struct get_token_info_reply, group_count) == 44 );
+ C_ASSERT( offsetof(struct get_token_info_reply, privilege_count) == 48 );
++C_ASSERT( offsetof(struct get_token_info_reply, integrity) == 52 );
+ C_ASSERT( sizeof(struct get_token_info_reply) == 56 );
++C_ASSERT( offsetof(struct set_token_integrity_request, handle) == 12 );
++C_ASSERT( offsetof(struct set_token_integrity_request, integrity) == 16 );
++C_ASSERT( sizeof(struct set_token_integrity_request) == 24 );
+ C_ASSERT( offsetof(struct create_linked_token_request, handle) == 12 );
+ C_ASSERT( sizeof(struct create_linked_token_request) == 16 );
+ C_ASSERT( offsetof(struct create_linked_token_reply, linked) == 8 );
+diff --git a/server/request_trace.h b/server/request_trace.h
+index f6acb47..adbeebb 100644
+--- a/server/request_trace.h
++++ b/server/request_trace.h
+@@ -3073,6 +3073,13 @@ static void dump_get_token_info_reply( const struct get_token_info_reply *req )
+     fprintf( stderr, ", is_elevated=%d", req->is_elevated );
+     fprintf( stderr, ", group_count=%d", req->group_count );
+     fprintf( stderr, ", privilege_count=%d", req->privilege_count );
++    fprintf( stderr, ", integrity=%08x", req->integrity );
++}
++
++static void dump_set_token_integrity_request( const struct set_token_integrity_request *req )
++{
++    fprintf( stderr, " handle=%04x", req->handle );
++    fprintf( stderr, ", integrity=%08x", req->integrity );
+ }
+ 
+ static void dump_create_linked_token_request( const struct create_linked_token_request *req )
+@@ -3805,6 +3812,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
+     (dump_func)dump_make_process_system_request,
+     (dump_func)dump_grant_process_admin_token_request,
+     (dump_func)dump_get_token_info_request,
++    (dump_func)dump_set_token_integrity_request,
+     (dump_func)dump_create_linked_token_request,
+     (dump_func)dump_create_completion_request,
+     (dump_func)dump_open_completion_request,
+@@ -4117,6 +4125,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
+     (dump_func)dump_make_process_system_reply,
+     NULL,
+     (dump_func)dump_get_token_info_reply,
++    NULL,
+     (dump_func)dump_create_linked_token_reply,
+     (dump_func)dump_create_completion_reply,
+     (dump_func)dump_open_completion_reply,
+@@ -4429,6 +4438,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
+     "make_process_system",
+     "grant_process_admin_token",
+     "get_token_info",
++    "set_token_integrity",
+     "create_linked_token",
+     "create_completion",
+     "open_completion",
+diff --git a/server/token.c b/server/token.c
+index ff8650f..97a0b1c 100644
+--- a/server/token.c
++++ b/server/token.c
+@@ -114,6 +114,7 @@ struct token
+     struct acl    *default_dacl;    /* the default DACL to assign to objects created by this user */
+     int            impersonation_level; /* impersonation level this token is capable of if non-primary token */
+     int            elevation;       /* elevation type */
++    unsigned int   integrity;       /* mandatory integrity RID, 0 = derived from elevation */
+     struct list    kernel_object;   /* list of kernel object pointers */
+ };
+ 
+@@ -487,6 +488,7 @@ static struct token *create_token( unsigned int primary, unsigned int session_id
+         token->default_dacl = NULL;
+         token->primary_group = NULL;
+         token->elevation = elevation;
++        token->integrity = 0;
+ 
+         /* copy user */
+         token->user = memdup( user, sid_len( user ));
+@@ -591,6 +593,7 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
+                           NULL, 0, src_token->default_dacl, modified_id,
+                           0, impersonation_level, src_token->elevation );
+     if (!token) return token;
++    token->integrity = src_token->integrity;
+ 
+     /* copy groups */
+     token->primary_group = NULL;
+@@ -1545,6 +1548,20 @@ DECL_HANDLER(get_token_info)
+             reply->is_elevated = token->elevation == TokenElevationTypeFull;
+         reply->group_count = list_count( &token->groups );
+         reply->privilege_count = list_count( &token->privileges );
++        if (token->integrity) reply->integrity = token->integrity;
++        else reply->integrity = token->elevation == TokenElevationTypeLimited ?
++                                SECURITY_MANDATORY_MEDIUM_RID : SECURITY_MANDATORY_HIGH_RID;
++        release_object( token );
++    }
++}
++
++DECL_HANDLER(set_token_integrity)
++{
++    struct token *token;
++
++    if ((token = (struct token *)get_handle_obj( current->process, req->handle, TOKEN_ADJUST_DEFAULT, &token_ops )))
++    {
++        token->integrity = req->integrity;
+         release_object( token );
+     }
+ }

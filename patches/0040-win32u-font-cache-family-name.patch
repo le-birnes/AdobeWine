@@ -1,0 +1,38 @@
+win32u: Keep the family name when loading fonts from the registry cache.
+
+load_font_list_from_cache() passed the KEY_NODE_INFORMATION buffer itself to
+create_family(), after query_reg_value() had reused it, so every family read from
+HKCU\Software\Wine\Fonts\Cache got a garbage name. Fonts that one process adds
+with AddFontResource (not FR_PRIVATE) are cached there for the others, so other
+processes could not find them by name. Creative Cloud (CoreSync LiveType) activates
+Adobe Fonts for "other apps" this way.
+
+diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
+index 97936e9..b4ed50d 100644
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -1340,6 +1340,8 @@ static void load_font_list_from_cache(void)
+     struct gdi_font_family *family;
+     HKEY hkey_family;
+     WCHAR *second_name = (WCHAR *)info->Data;
++    WCHAR family_name[LF_FACESIZE];
++    DWORD len;
+ 
+     while (!NtEnumerateKey( wine_fonts_cache_key, family_index++, KeyNodeInformation, enum_info,
+                             sizeof(buffer), &total_size ))
+@@ -1348,10 +1350,14 @@ static void load_font_list_from_cache(void)
+                                           enum_info->NameLength )))
+             continue;
+         TRACE( "opened family key %s\n", debugstr_wn(enum_info->Name, enum_info->NameLength / sizeof(WCHAR)) );
++        /* the key name lives in buffer, which the value query below overwrites */
++        len = min( enum_info->NameLength / sizeof(WCHAR), ARRAY_SIZE(family_name) - 1 );
++        memcpy( family_name, enum_info->Name, len * sizeof(WCHAR) );
++        family_name[len] = 0;
+         if (!query_reg_value( hkey_family, NULL, info, sizeof(buffer) ))
+             second_name[0] = 0;
+ 
+-        family = create_family( buffer, second_name );
++        family = create_family( family_name, second_name );
+ 
+         load_face_from_cache( hkey_family, family, buffer, sizeof(buffer), TRUE );
+ 

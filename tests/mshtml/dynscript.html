@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><title>start</title>
+<script>
+var L = [];
+function rec(s) { L.push(s); document.title = L.join(" | "); }
+</script></head><body><script>
+rec("mode " + document.documentMode);
+var g = document.createElement("script");
+g.type = "text/javascript"; g.src = "./dyn.js";
+g.onload = function() { rec("onload fired, loaded=" + window.j2x_loaded); };
+g.onerror = function() { rec("onerror fired"); };
+g.onreadystatechange = function() { rec("rsc " + g.readyState); };
+g.addEventListener("load", function() { rec("listener load"); });
+rec("typeof onload " + typeof g.onload);
+document.head.appendChild(g);
+setTimeout(function() { rec("after 1s loaded=" + window.j2x_loaded); }, 1000);
+</script></body></html>

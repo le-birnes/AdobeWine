@@ -1,0 +1,33 @@
+diff --git a/dlls/ntdll/unix/security.c b/dlls/ntdll/unix/security.c
+index 1e1b4f8..103fb9c 100644
+--- a/dlls/ntdll/unix/security.c
++++ b/dlls/ntdll/unix/security.c
+@@ -386,6 +386,10 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
+ 
+     if (class < ARRAY_SIZE(info_len)) len = info_len[class];
+     if (retlen) *retlen = len;
++    /* fixed-size UAC classes report a length mismatch (ERROR_BAD_LENGTH), as on Windows;
++     * Adobe Update Service sizes TokenLinkedToken this way and gives up on anything else */
++    if (length < len && (class == TokenLinkedToken || class == TokenElevationType || class == TokenElevation))
++        return STATUS_INFO_LENGTH_MISMATCH;
+     if (length < len) return STATUS_BUFFER_TOO_SMALL;
+ 
+     switch (class)
+diff --git a/dlls/wow64/security.c b/dlls/wow64/security.c
+index 331e297..bacbec5 100644
+--- a/dlls/wow64/security.c
++++ b/dlls/wow64/security.c
+@@ -539,6 +539,13 @@ NTSTATUS WINAPI wow64_NtQueryInformationToken( UINT *args )
+     {
+         TOKEN_LINKED_TOKEN link;
+ 
++        /* a size query (NULL buffer) must not write the handle; Windows reports
++         * ERROR_BAD_LENGTH, which Adobe Update Service relies on */
++        if (len < sizeof(ULONG))
++        {
++            if (retlen) *retlen = sizeof(ULONG);
++            return STATUS_INFO_LENGTH_MISMATCH;
++        }
+         status = NtQueryInformationToken( handle, class, &link, sizeof(link), &ret_size );
+         if (!status) *(ULONG *)info = HandleToLong( link.LinkedToken );
+         if (retlen) *retlen = sizeof(ULONG);

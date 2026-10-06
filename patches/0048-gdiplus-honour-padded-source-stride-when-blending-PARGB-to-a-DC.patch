@@ -1,0 +1,18 @@
+diff --git a/dlls/gdiplus/graphics.c b/dlls/gdiplus/graphics.c
+index 6996f23..4008dd0 100644
+--- a/dlls/gdiplus/graphics.c
++++ b/dlls/gdiplus/graphics.c
+@@ -605,7 +605,12 @@ static GpStatus alpha_blend_hdc_pixels(GpGraphics *graphics, INT dst_x, INT dst_
+         blend_32bppARGB(src_width, src_height, temp_bits,
+                         4 * src_width, src, src_stride);
+     else if (fmt & PixelFormatPAlpha)
+-        memcpy(temp_bits, src, src_width * src_height * 4);
++    {
++        /* the source rows may be padded (src_stride > 4 * src_width) */
++        INT y;
++        for (y = 0; y < src_height; y++)
++            memcpy(temp_bits + y * 4 * src_width, src + y * src_stride, src_width * 4);
++    }
+     else
+         convert_32bppARGB_to_32bppPARGB(src_width, src_height, temp_bits,
+                                         4 * src_width, src, src_stride);

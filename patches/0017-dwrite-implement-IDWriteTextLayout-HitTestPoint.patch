@@ -1,0 +1,64 @@
+diff --git a/dlls/dwrite/layout.c b/dlls/dwrite/layout.c
+index e362aba..9cd162f 100644
+--- a/dlls/dwrite/layout.c
++++ b/dlls/dwrite/layout.c
+@@ -4378,9 +4378,57 @@ width_done:
+ static HRESULT WINAPI dwritetextlayout_HitTestPoint(IDWriteTextLayout4 *iface,
+     FLOAT pointX, FLOAT pointY, BOOL* is_trailinghit, BOOL* is_inside, DWRITE_HIT_TEST_METRICS *metrics)
+ {
+-    FIXME("%p, %.8e, %.8e, %p, %p, %p): stub\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
++    struct dwrite_textlayout *layout = impl_from_IDWriteTextLayout4(iface);
++    DWRITE_HIT_TEST_METRICS m, best;
++    float best_distance = -1.0f, x, y;
++    UINT32 position = 0;
++    BOOL found = FALSE;
++    HRESULT hr;
+ 
+-    return E_NOTIMPL;
++    TRACE("%p, %.8e, %.8e, %p, %p, %p.\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
++
++    if (FAILED(hr = layout_compute_effective_runs(layout)))
++        return hr;
++
++    *is_trailinghit = FALSE;
++    *is_inside = FALSE;
++    memset(metrics, 0, sizeof(*metrics));
++    memset(&best, 0, sizeof(best));
++
++    /* Walk the clusters and pick the box containing the point, or the closest one. */
++    while (position < layout->length)
++    {
++        float dx = 0.0f, dy = 0.0f, distance;
++
++        if (FAILED(IDWriteTextLayout4_HitTestTextPosition(iface, position, FALSE, &x, &y, &m)))
++            break;
++
++        if (pointX < m.left) dx = m.left - pointX;
++        else if (pointX >= m.left + m.width) dx = pointX - (m.left + m.width);
++        if (pointY < m.top) dy = m.top - pointY;
++        else if (pointY >= m.top + m.height) dy = pointY - (m.top + m.height);
++
++        /* Prefer the right line first, then the closest box on it. */
++        distance = dy * 4096.0f + dx;
++        if (!found || distance < best_distance)
++        {
++            best = m;
++            best_distance = distance;
++            found = TRUE;
++            if (dx == 0.0f && dy == 0.0f) break;
++        }
++
++        position = m.textPosition + max(m.length, 1);
++    }
++
++    if (!found)
++        return S_OK;
++
++    *metrics = best;
++    *is_inside = best_distance == 0.0f;
++    *is_trailinghit = pointX >= best.left + best.width / 2.0f;
++
++    return S_OK;
+ }
+ 
+ static struct layout_effective_run *layout_get_effective_run_for_position(struct dwrite_textlayout *layout,

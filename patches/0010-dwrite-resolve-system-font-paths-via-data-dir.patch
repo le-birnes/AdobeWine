@@ -1,0 +1,118 @@
+diff --git a/dlls/dwrite/dwrite_private.h b/dlls/dwrite/dwrite_private.h
+index 2d7987d..3421e86 100644
+--- a/dlls/dwrite/dwrite_private.h
++++ b/dlls/dwrite/dwrite_private.h
+@@ -325,6 +325,7 @@ extern HRESULT create_trimmingsign(IDWriteFactory7 *factory, IDWriteTextFormat *
+         IDWriteInlineObject **sign);
+ extern HRESULT create_typography(IDWriteTypography**);
+ extern HRESULT create_localizedstrings(IDWriteLocalizedStrings**);
++extern WCHAR *dwrite_resolve_font_path(const WCHAR *file);
+ extern HRESULT add_localizedstring(IDWriteLocalizedStrings*,const WCHAR*,const WCHAR*);
+ extern HRESULT clone_localizedstrings(IDWriteLocalizedStrings *iface, IDWriteLocalizedStrings **strings);
+ extern void    set_en_localizedstring(IDWriteLocalizedStrings*,const WCHAR*);
+diff --git a/dlls/dwrite/font.c b/dlls/dwrite/font.c
+index 9544784..f34b420 100644
+--- a/dlls/dwrite/font.c
++++ b/dlls/dwrite/font.c
+@@ -4856,13 +4856,16 @@ static HRESULT create_local_file_reference(IDWriteFactory7 *factory, const WCHAR
+     /* Fonts installed in 'Fonts' system dir don't get full path in registry font files cache */
+     if (!wcschr(filename, '\\'))
+     {
+-        WCHAR fullpathW[MAX_PATH];
+-
+-        GetWindowsDirectoryW(fullpathW, ARRAY_SIZE(fullpathW));
+-        wcscat(fullpathW, L"\\fonts\\");
+-        wcscat(fullpathW, filename);
++        /* Resolve against C:\windows\fonts, falling back to Wine's build/data font dir
++         * when the file isn't physically present in the prefix (bundled fonts are loaded
++         * from the data dir, not copied into the prefix). Keeps the DWrite system collection
++         * consistent with GDI so system/last-resort font lookups succeed on a fresh prefix. */
++        WCHAR *fullpathW = dwrite_resolve_font_path(filename);
+ 
++        if (!fullpathW)
++            return E_OUTOFMEMORY;
+         hr = IDWriteFactory7_CreateFontFileReference(factory, fullpathW, NULL, file);
++        free(fullpathW);
+     }
+     else
+         hr = IDWriteFactory7_CreateFontFileReference(factory, filename, NULL, file);
+diff --git a/dlls/dwrite/main.c b/dlls/dwrite/main.c
+index b343d65..121910a 100644
+--- a/dlls/dwrite/main.c
++++ b/dlls/dwrite/main.c
+@@ -1551,6 +1551,53 @@ static HKEY open_fonts_key(void)
+     return hkey;
+ }
+ 
++/* Build C:\windows\fonts\<file>. When that file is not physically present in the
++ * prefix (Wine loads its bundled fonts from the build/data directory rather than
++ * copying them into the prefix), fall back to WINEBUILDDIR/WINEDATADIR so the DirectWrite
++ * system font set matches what GDI already sees. Without this, apps relying on the
++ * DWrite system collection (e.g. last-resort font resolution) fail on a fresh prefix. */
++WCHAR *dwrite_resolve_font_path(const WCHAR *file)
++{
++    static const WCHAR *const env_vars[] = { L"WINEBUILDDIR", L"WINEDATADIR" };
++    WCHAR windir[MAX_PATH], env[MAX_PATH], *path;
++    unsigned int i;
++
++    GetWindowsDirectoryW(windir, MAX_PATH);
++    path = malloc((wcslen(windir) + wcslen(file) + ARRAY_SIZE(L"\\fonts\\")) * sizeof(WCHAR));
++    if (!path) return NULL;
++    wcscpy(path, windir);
++    wcscat(path, L"\\fonts\\");
++    wcscat(path, file);
++
++    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
++        return path;
++
++    for (i = 0; i < ARRAY_SIZE(env_vars); ++i)
++    {
++        DWORD len = GetEnvironmentVariableW(env_vars[i], env, ARRAY_SIZE(env));
++        WCHAR *dos = env, *alt;
++
++        if (!len || len >= ARRAY_SIZE(env)) continue;
++        /* Wine passes these as NT paths (\??\Z:\...); strip the prefix for a DOS path. */
++        if (!wcsncmp(dos, L"\\??\\", 4)) dos += 4;
++
++        alt = malloc((wcslen(dos) + wcslen(file) + ARRAY_SIZE(L"\\fonts\\")) * sizeof(WCHAR));
++        if (!alt) continue;
++        wcscpy(alt, dos);
++        wcscat(alt, L"\\fonts\\");
++        wcscat(alt, file);
++
++        if (GetFileAttributesW(alt) != INVALID_FILE_ATTRIBUTES)
++        {
++            free(path);
++            return alt;
++        }
++        free(alt);
++    }
++
++    return path;
++}
++
+ static HRESULT create_system_path_list(WCHAR ***ret, unsigned int *ret_count)
+ {
+     unsigned int index = 0, value_size, max_name_count;
+@@ -1611,15 +1658,13 @@ static HRESULT create_system_path_list(WCHAR ***ret, unsigned int *ret_count)
+             {
+                 if (!wcschr(value, '\\'))
+                 {
+-                    WCHAR *ptrW;
++                    WCHAR *ptrW = dwrite_resolve_font_path(value);
+ 
+-                    ptrW = malloc((MAX_PATH + wcslen(value)) * sizeof(WCHAR));
+-                    GetWindowsDirectoryW(ptrW, MAX_PATH);
+-                    wcscat(ptrW, L"\\fonts\\");
+-                    wcscat(ptrW, value);
+-
+-                    free(value);
+-                    value = ptrW;
++                    if (ptrW)
++                    {
++                        free(value);
++                        value = ptrW;
++                    }
+                 }
+ 
+                 paths[count++] = value;

@@ -1,0 +1,55 @@
+diff --git a/dlls/rtworkq/queue.c b/dlls/rtworkq/queue.c
+index 144feb9..ce37cc7 100644
+--- a/dlls/rtworkq/queue.c
++++ b/dlls/rtworkq/queue.c
+@@ -225,6 +225,7 @@ static HRESULT unlock_user_queue(DWORD queue)
+ {
+     HRESULT hr = RTWQ_E_INVALID_WORKQUEUE;
+     struct queue_handle *entry;
++    struct queue *obj = NULL;
+ 
+     if (!(queue & RTWQ_CALLBACK_QUEUE_PRIVATE_MASK))
+         return S_OK;
+@@ -236,14 +237,21 @@ static HRESULT unlock_user_queue(DWORD queue)
+         if (--entry->refcount == 0)
+         {
+             if (shared_mt_queue == queue) shared_mt_queue = 0;
+-            shutdown_queue((struct queue *)entry->obj);
+-            free(entry->obj);
++            obj = entry->obj;
+             entry->obj = next_free_user_queue;
+             next_free_user_queue = entry;
+         }
+         hr = S_OK;
+     }
+     LeaveCriticalSection(&queues_section);
++
++    /* Shutting a queue down waits for its running callbacks, which may themselves
++     * need queues_section, so it is done without holding it. */
++    if (obj)
++    {
++        shutdown_queue(obj);
++        free(obj);
++    }
+     return hr;
+ }
+ 
+@@ -1301,13 +1309,16 @@ static void shutdown_system_queues(void)
+     unsigned int i;
+     HRESULT hr;
+ 
+-    EnterCriticalSection(&queues_section);
+-
++    /* Not under queues_section: shutting a queue down waits for its running callbacks,
++     * and a callback that shuts down a media source unlocks its user queue, which takes
++     * queues_section (Photoshop hung on exit in MFShutdown). */
+     for (i = 0; i < ARRAY_SIZE(system_queues); ++i)
+     {
+         shutdown_queue(&system_queues[i]);
+     }
+ 
++    EnterCriticalSection(&queues_section);
++
+     if (FAILED(hr = CoDecrementMTAUsage(mta_cookie)))
+         WARN("Failed to uninitialize MTA, hr %#lx.\n", hr);
+ 

@@ -1,0 +1,29 @@
+From f0b2d66e93ae5c127ecf2df5b294ca389963730b Mon Sep 17 00:00:00 2001
+From: PhialsBasement <PhialsBasement@users.noreply.github.com>
+Date: Mon, 1 Jun 2026 07:26:57 +1000
+Subject: [PATCH] msvcrt: Avoid NULL dereference in _FindAndUnlinkFrame on an
+ empty frame list.
+
+When frame_info_head is NULL and the frame being unlinked is not the head,
+the lookup loop dereferenced NULL via cur->next. Guard the loop so it falls
+through to the existing not-found path.
+---
+ dlls/msvcrt/except.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/msvcrt/except.c b/dlls/msvcrt/except.c
+index 8be9ab7..3ebdcdb 100644
+--- a/dlls/msvcrt/except.c
++++ b/dlls/msvcrt/except.c
+@@ -919,7 +919,7 @@ void CDECL _FindAndUnlinkFrame(frame_info *fi)
+         return;
+     }
+ 
+-    for (; cur->next; cur = cur->next)
++    for (; cur && cur->next; cur = cur->next)
+     {
+         if (cur->next == fi)
+         {
+-- 
+2.56.0
+

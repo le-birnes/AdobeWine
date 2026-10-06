@@ -1,0 +1,46 @@
+diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+index 8ddc262..dcc759f 100644
+--- a/dlls/winex11.drv/init.c
++++ b/dlls/winex11.drv/init.c
+@@ -293,6 +293,13 @@ static void client_surface_update_geometry( HWND hwnd, struct x11drv_client_surf
+     XWindowChanges changes = surface->changes;
+     int mask = 0;
+ 
++    /* offscreen windows keep the swapchain size, the copy to the toplevel stretches it */
++    if (surface->client.offscreen && surface->client.buffer_size.cx && surface->client.buffer_size.cy)
++    {
++        rect.right = rect.left + surface->client.buffer_size.cx;
++        rect.bottom = rect.top + surface->client.buffer_size.cy;
++    }
++
+     changes.x = rect.left;
+     changes.y = rect.top;
+     changes.width  = min( max( 1, rect.right - rect.left ), 65535 );
+@@ -394,6 +401,15 @@ static void X11DRV_client_surface_present( struct client_surface *client, HDC hd
+     else region = get_dc_monitor_region( hwnd, hdc );
+ 
+     rect_src = surface->client.raw ? surface->client.monitor_rect : surface->client.virtual_rect;
++    if (surface->client.buffer_size.cx && surface->client.buffer_size.cy)
++    {
++        RECT drawable_rect;
++
++        SetRect( &rect_src, 0, 0, surface->client.buffer_size.cx, surface->client.buffer_size.cy );
++        if (get_dc_drawable( surface->hdc_src, &drawable_rect ) != surface->window ||
++            !EqualRect( &drawable_rect, &rect_src ))
++            set_dc_drawable( surface->hdc_src, surface->window, &rect_src, IncludeInferiors );
++    }
+     TRACE( "hwnd %p %s to toplevel %p %s region %p\n", hwnd, wine_dbgstr_rect(&rect_src),
+            toplevel, wine_dbgstr_rect(&rect_dst), region );
+ 
+diff --git a/include/wine/gdi_driver.h b/include/wine/gdi_driver.h
+index ad00912..a9c3d13 100644
+--- a/include/wine/gdi_driver.h
++++ b/include/wine/gdi_driver.h
+@@ -272,6 +272,7 @@ struct client_surface
+     RECT                               virtual_rect;   /* virtual size and position in the toplevel ancestor, relative to its visible rect */
+     RECT                               monitor_rect;   /* raw physical size and position in the toplevel ancestor, relative to its visible rect */
+     BOOL                               raw;            /* use the raw physical position and size for the host client surface */
++    SIZE                               buffer_size;    /* size of the current swapchain images, 0 if none */
+ };
+ 
+ W32KAPI void *client_surface_create( const struct client_surface_funcs *funcs, HWND hwnd, int format, BOOL raw );

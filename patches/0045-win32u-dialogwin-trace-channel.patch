@@ -1,0 +1,97 @@
+win32u: Add a dialogwin channel tracing dialog windows (#32770).
+
+Diagnostics only: creation, style changes, layered attributes, SetWindowPos, ShowWindow
+and destroy of dialog-class windows, with their state. bin/env.sh enables it, so the
+next time Photoshop leaves its empty layered dialog on screen the log shows how.
+
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index bd71999..a402fcc 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -33,6 +33,10 @@
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(win);
++WINE_DECLARE_DEBUG_CHANNEL(dialogwin);
++
++static void dialog_trace( HWND hwnd, const char *fmt, ... );
++
+ 
+ #define USER_HANDLE_TO_INDEX(hwnd) ((LOWORD(hwnd) - FIRST_USER_HANDLE) >> 1)
+ #define USER_HANDLE_FROM_INDEX(index, generation) UlongToHandle( (index << 1) + FIRST_USER_HANDLE + (generation << 16) )
+@@ -1574,6 +1578,10 @@ static LONG_PTR set_window_long_internal( HWND hwnd, INT offset, UINT size,
+     WND *win;
+ 
+     TRACE( "%p %d %lx %c\n", hwnd, offset, newval, ansi ? 'A' : 'W' );
++    if (offset == GWL_STYLE || offset == GWL_EXSTYLE)
++    {
++        dialog_trace( hwnd, "SetWindowLong %s %08lx", offset == GWL_STYLE ? "STYLE" : "EXSTYLE", (long)newval );
++    }
+ 
+     if (is_broadcast(hwnd))
+     {
+@@ -2688,10 +2696,29 @@ BOOL WINAPI NtUserGetLayeredWindowAttributes( HWND hwnd, COLORREF *key, BYTE *al
+ /*****************************************************************************
+  *           NtUserSetLayeredWindowAttributes (win32u.@)
+  */
++
++/* Dialog-class windows (#32770): log creation, style, layered attributes, position, show
++ * and destroy on the "dialogwin" channel. Photoshop sometimes leaves an empty layered
++ * dialog on screen that Windows never shows; this records how it got there. */
++static void dialog_trace( HWND hwnd, const char *fmt, ... )
++{
++    char buf[256]; va_list args; RECT r = {0};
++    DWORD ex, style;
++    if (!TRACE_ON(dialogwin) || !hwnd) return;
++    if (get_class_long( hwnd, GCW_ATOM, FALSE ) != 0x8002) return;
++    ex = get_window_long( hwnd, GWL_EXSTYLE ); style = get_window_long( hwnd, GWL_STYLE );
++    get_window_rect( hwnd, &r, get_thread_dpi() );
++    va_start( args, fmt ); vsnprintf( buf, sizeof(buf), fmt, args ); va_end( args );
++    TRACE_(dialogwin)( "%p style %08x ex %08x %s %s owner %p: %s\n", hwnd, (unsigned)style, (unsigned)ex,
++                       (style & WS_VISIBLE) ? "vis" : "hid", wine_dbgstr_rect( &r ),
++                       get_window_relative( hwnd, GW_OWNER ), buf );
++}
+ BOOL WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags )
+ {
+     BOOL ret;
+ 
++    dialog_trace( hwnd, "SetLayeredWindowAttributes key %06x alpha %u flags %x", (unsigned)key, alpha, (unsigned)flags );
++
+     TRACE( "(%p,%s,%d,%x)\n", hwnd, debugstr_color(key), alpha, flags );
+ 
+     SERVER_START_REQ( set_window_layered_info )
+@@ -4126,6 +4153,9 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
+     UINT orig_flags, context;
+     BOOL ret = FALSE;
+ 
++    dialog_trace( winpos->hwnd, "SetWindowPos %d,%d %dx%d flags %08x after %p", winpos->x, winpos->y,
++                  winpos->cx, winpos->cy, winpos->flags, winpos->hwndInsertAfter );
++
+     orig_flags = winpos->flags;
+ 
+     /* First, check z-order arguments.  */
+@@ -5002,6 +5032,8 @@ static BOOL show_window( HWND hwnd, INT cmd )
+     RECT newPos = {0, 0, 0, 0};
+     UINT new_swp, swp = 0, context;
+ 
++    dialog_trace( hwnd, "ShowWindow %d", cmd );
++
+     TRACE( "hwnd=%p, cmd=%d, was_visible %d\n", hwnd, cmd, was_visible );
+ 
+     context = set_thread_dpi_awareness_context( get_window_dpi_awareness_context( hwnd ));
+@@ -5642,6 +5674,7 @@ static BOOL user_destroy_window( HWND hwnd, BOOL winevent )
+ 
+ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
+ {
++    dialog_trace( hwnd, "DestroyWindow" );
+     return user_destroy_window( hwnd, TRUE );
+ }
+ 
+@@ -6220,6 +6253,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
+         call_hooks( WH_SHELL, HSHELL_WINDOWCREATED, (WPARAM)hwnd, 0, 0 );
+ 
+     TRACE( "created window %p\n", hwnd );
++    dialog_trace( hwnd, "created" );
+     set_thread_dpi_awareness_context( context );
+ 
+     toplevel = NtUserGetAncestor( hwnd, GA_ROOT );

@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><title>start</title></head><body><script>
+var n = 0;
+setInterval(function() {
+  n++;
+  document.title = "tick " + n + " typeof JSObject=" + typeof window.JSObject + " in=" + ("JSObject" in window) +
+      " bare=" + (typeof JSObject);
+}, 200);
+</script></body></html>

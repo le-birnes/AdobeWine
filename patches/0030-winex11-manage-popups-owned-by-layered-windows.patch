@@ -1,0 +1,21 @@
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index d7df0a8..4c7a05d 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -463,6 +463,16 @@ static BOOL is_window_managed( HWND hwnd, UINT swp_flags, BOOL fullscreen )
+     if (ex_style & WS_EX_APPWINDOW) return TRUE;
+     /* windows that own popups are managed */
+     if (has_owned_popups( hwnd )) return TRUE;
++    /* plain popups owned by a layered window (a splash screen's side panel) are managed
++     * too, and so their owner (make_owner_managed): an unmanaged window is stacked above
++     * every managed one, so it would cover the dialogs the application later shows over
++     * the splash (Audition's crash recovery prompt). Tool and topmost windows (menus,
++     * tooltips) stay unmanaged. */
++    if ((style & WS_POPUP) && !(ex_style & (WS_EX_TOOLWINDOW | WS_EX_TOPMOST)))
++    {
++        HWND owner = NtUserGetWindowRelative( hwnd, GW_OWNER );
++        if (owner && (NtUserGetWindowLongW( owner, GWL_EXSTYLE ) & WS_EX_LAYERED)) return TRUE;
++    }
+     /* default: not managed */
+     return FALSE;
+ }

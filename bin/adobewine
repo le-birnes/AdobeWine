@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# AdobeWine launcher.
+#   adobewine setup [--windows-fonts DIR]     create or refresh the Wine prefix (run once)
+#   adobewine photoshop|illustrator|premiere|audition|encoder|cc [files...]
+#   adobewine run <program.exe> [args...]     run any Windows program in the AdobeWine prefix
+#   adobewine off [--force]                   close the Adobe apps like their close button, then stop Wine
+#   adobewine fix-signin                      use the built-in browser for Adobe sign-in (see docs)
+#   adobewine launchers [--remove]            add the installed apps to the desktop menu
+#   adobewine report [--note "..."]           send a problem report (you see it first)
+#   adobewine winecfg|regedit|shell           Wine tools for this prefix
+source "$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/bin/env.sh"
+P='C:\Program Files\Adobe'
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+  photoshop)   exe="$P\\Adobe Photoshop 2026\\Photoshop.exe" ;;
+  illustrator) exe="$P\\Adobe Illustrator 2026\\Support Files\\Contents\\Windows\\Illustrator.exe" ;;
+  premiere)    exe="$P\\Adobe Premiere Pro 2026\\Adobe Premiere Pro.exe" ;;
+  audition)    exe="$P\\Adobe Audition 2026\\Adobe Audition.exe" ;;
+  encoder)     exe="$P\\Adobe Media Encoder 2026\\Adobe Media Encoder.exe" ;;
+  cc)          exe="$P\\Adobe Creative Cloud\\ACC\\Creative Cloud.exe" ;;
+  run)         exe="$1"; shift ;;
+  setup)       exec "$ADOBEWINE_SRC/scripts/setup-prefix.sh" "$@" ;;
+  launchers)   exec "$ADOBEWINE_SRC/scripts/install-launchers.sh" "$@" ;;
+  report)      exec "$ADOBEWINE_SRC/scripts/report.sh" "$@" ;;
+  winecfg|regedit) exec wine "$cmd" ;;
+  shell)       exec bash --rcfile <(echo "source '$ADOBEWINE_SRC/bin/env.sh'; PS1='(adobewine) \\w \$ '") ;;
+  off)
+    if [ "${1:-}" != --force ]; then
+      W="$ADOBEWINE_SRC/lib/winclose.exe"
+      [ -f "$W" ] || W="$ADOBEWINE_HOME/winclose.exe"
+      [ -f "$W" ] || x86_64-w64-mingw32-gcc -O2 -o "$W" "$ADOBEWINE_SRC/tools/winclose/winclose.c"
+      wine "$W" Photoshop.exe Illustrator.exe "Adobe Audition.exe" "Adobe Premiere Pro.exe" "Adobe Media Encoder.exe" >/dev/null 2>&1
+      apps='^(Photoshop|Illustrator|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder)\.exe'
+      for _ in $(seq 60); do wine tasklist 2>/dev/null | grep -qiE "$apps" || break; sleep 1; done
+      if wine tasklist 2>/dev/null | grep -qiE "$apps"; then
+        echo "An Adobe app is still open (maybe asking to save). Close it, or run: adobewine off --force"; exit 1
+      fi
+    fi
+    wineserver -k; echo "All AdobeWine processes stopped."; exit 0 ;;
+  fix-signin)
+    # Adobe's licensing window comes in two flavours; the Chromium one does not draw under
+    # Wine, the Internet Explorer engine one does. Renaming the Chromium helper makes Adobe's
+    # sign-in library fall back to the IE one. Your sign-in and licence are unchanged.
+    f="$WINEPREFIX/drive_c/Program Files (x86)/Common Files/Adobe/Adobe Desktop Common/NGL/adobe_licensing_wf.exe"
+    [ -f "$f" ] && mv "$f" "$f.disabled" && echo "done" || echo "nothing to do (helper not present or already renamed)"
+    exit 0 ;;
+  ""|-h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "unknown command: $cmd (try adobewine --help)" >&2; exit 1 ;;
+esac
+# Linux paths (from a file manager or a .desktop %F) become Windows paths.
+args=()
+for a in "$@"; do
+  if [ -e "$a" ]; then args+=("Z:$(realpath "$a" | sed 's|/|\\|g')"); else args+=("$a"); fi
+done
+# Creative Cloud (Chromium): with GPU vsync a page change can stay off screen until a repaint.
+[ "$cmd" = cc ] && args=(--disable-gpu-vsync "${args[@]}")
+log="$ADOBEWINE_HOME/logs/$cmd-$(date +%Y%m%d-%H%M%S).log"
+echo "log: $log"
+start=$SECONDS
+wine "$exe" "${args[@]}" > "$log" 2>&1
+rc=$?
+# After a crash: offer a report (REPORTS=ask, the default), send it (REPORTS=auto) or do
+# nothing (REPORTS=off), as set in ~/.config/adobewine/config.
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/adobewine/config"
+REPORTS=ask; [ -f "$conf" ] && source "$conf"
+if [ "$REPORTS" != off ] && grep -qE 'Unhandled exception|Unhandled page fault|page fault on' "$log"; then
+  r=("$ADOBEWINE_SRC/scripts/report.sh" --app "$cmd" --log "$log" --exit-code "$rc" --duration $((SECONDS - start)))
+  if [ "$REPORTS" = auto ]; then "${r[@]}" --auto >/dev/null 2>&1
+  elif [ -t 0 ]; then echo "$cmd crashed."; "${r[@]}"
+  else "${r[@]}" --save-only >/dev/null 2>&1
+       command -v notify-send >/dev/null && notify-send -i dialog-warning "AdobeWine: $cmd crashed" \
+         "A report was saved. Run 'adobewine report' in a terminal to review and send it."
+  fi
+fi
+exit $rc

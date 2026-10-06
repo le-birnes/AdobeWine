@@ -1,0 +1,25 @@
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+index a6d51cf..4a8014c 100644
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -1891,7 +1891,8 @@ static void d2d_device_context_begin_layer(struct d2d_device_context *context, I
+             continue;
+         b = unsafe_impl_from_ID2D1Bitmap((ID2D1Bitmap *)context->layer_cache[i]);
+         if (b->pixel_size.width == context->pixel_size.width && b->pixel_size.height == context->pixel_size.height
+-                && b->format.format == context->desc.pixelFormat.format)
++                && b->format.format == context->desc.pixelFormat.format
++                && b->format.alphaMode == D2D1_ALPHA_MODE_PREMULTIPLIED)
+         {
+             static const float transparent[4];
+             ID3D11DeviceContext *d3d_context;
+@@ -1907,6 +1908,10 @@ static void d2d_device_context_begin_layer(struct d2d_device_context *context, I
+     if (!bitmap)
+     {
+         props.pixelFormat = context->desc.pixelFormat;
++        /* Always keep the layer's own coverage: with the target's IGNORE alpha mode
++         * (window targets) the untouched, cleared parts of the layer would composite
++         * as opaque black (Audition's Export File dialog). */
++        props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+         props.dpiX = props.dpiY = 96.0f;
+         props.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
+         if (FAILED(d2d_device_context_ID2D1DeviceContext_CreateBitmap(iface, context->pixel_size, NULL, 0, &props, &bitmap)))

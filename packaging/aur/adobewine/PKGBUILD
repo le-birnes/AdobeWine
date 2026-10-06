@@ -1,0 +1,68 @@
+# Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
+pkgname=adobewine
+pkgver=0.1.0
+_winever=11.18
+pkgrel=1
+pkgdesc="AdobeWine: Wine ${_winever} with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
+arch=(x86_64)
+url="https://github.com/le-birnes/AdobeWine"
+license=(LGPL-2.1-or-later)
+options=(!lto !debug staticlibs)
+depends=(
+  desktop-file-utils fontconfig freetype2 libgcc gettext glib2 glibc libpcap libunwind
+  libx11 libxcursor libxext libxkbcommon libxi libxrandr systemd-libs wayland
+  vulkan-icd-loader gnutls alsa-lib libpulse gst-plugins-base-libs winetricks curl
+)
+makedepends=(
+  git ffmpeg libcups libgphoto2 libxcomposite libxinerama libxxf86vm mesa mingw-w64-gcc
+  opencl-headers opencl-icd-loader pcsclite perl samba sane sdl2 unixodbc v4l-utils
+  vulkan-headers
+)
+optdepends=(
+  'gst-plugins-good: MP4/MKV media in Premiere Pro, Audition and Media Encoder'
+  'gst-plugins-bad: more media formats'
+  'gst-libav: more media formats'
+  'nvidia-utils: NVIDIA GPU (CUDA, NVENC through nvidia-libs)'
+  'vulkan-intel: Intel GPU'
+  'vulkan-radeon: AMD GPU'
+  'p7zip: application icons for the desktop menu entries'
+  'python-pillow: application icons for the desktop menu entries'
+)
+source=("adobewine-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+        "https://dl.winehq.org/wine/source/11.x/wine-${_winever}.tar.xz")
+sha256sums=('SKIP'
+            'c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4')
+
+prepare() {
+  cd "wine-${_winever}"
+  for p in "$srcdir/AdobeWine-${pkgver}"/patches/*.patch; do
+    patch -Np1 -i "$p" >/dev/null || { echo "patch failed: ${p##*/}"; return 1; }
+  done
+  rm -rf "$srcdir/build"; mkdir "$srcdir/build"
+}
+
+build() {
+  export CROSSCFLAGS="-O2 -pipe" CROSSLDFLAGS="-Wl,-O1"
+  cd "$srcdir/build"
+  "../wine-${_winever}/configure" --prefix=/opt/adobewine/runtime --disable-tests \
+      --enable-archs=x86_64,i386 --enable-build-id
+  make
+  # Small Windows helpers, prebuilt so users need no MinGW compiler.
+  cd "$srcdir/AdobeWine-${pkgver}"
+  x86_64-w64-mingw32-gcc -O2 -shared -o d3d12.dll shims/d3d12/d3d12shim.c shims/d3d12/d3d12.def \
+      -Wl,--enable-stdcall-fixup
+  x86_64-w64-mingw32-gcc -O2 -o winclose.exe tools/winclose/winclose.c
+}
+
+package() {
+  cd "$srcdir/build"
+  make DESTDIR="$pkgdir" install
+  cd "$srcdir/AdobeWine-${pkgver}"
+  install -d "$pkgdir/opt/adobewine/lib"
+  cp -r bin scripts shims tools patches docs README.md LICENSE VERSION "$pkgdir/opt/adobewine/"
+  install -m644 d3d12.dll winclose.exe "$pkgdir/opt/adobewine/lib/"
+  install -d "$pkgdir/usr/bin"
+  ln -s /opt/adobewine/bin/adobewine "$pkgdir/usr/bin/adobewine"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

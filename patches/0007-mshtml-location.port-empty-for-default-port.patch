@@ -1,0 +1,21 @@
+diff --git a/dlls/mshtml/htmllocation.c b/dlls/mshtml/htmllocation.c
+index 91ca179..912a941 100644
+--- a/dlls/mshtml/htmllocation.c
++++ b/dlls/mshtml/htmllocation.c
+@@ -342,6 +342,16 @@ static HRESULT WINAPI HTMLLocation_get_port(IHTMLLocation *iface, BSTR *p)
+     if(FAILED(hres))
+         return hres;
+ 
++    /* IE10+ returns an empty string when the port is the default one for the scheme. */
++    if(hres == S_OK && dispex_compat_mode(&This->window->base.inner_window->event_target.dispex) >= COMPAT_MODE_IE10) {
++        DWORD scheme = URL_SCHEME_UNKNOWN;
++
++        IUri_GetScheme(uri, &scheme);
++        if((scheme == URL_SCHEME_HTTP && port == 80) || (scheme == URL_SCHEME_HTTPS && port == 443) ||
++           (scheme == URL_SCHEME_FTP && port == 21))
++            hres = S_FALSE;
++    }
++
+     if(hres == S_OK) {
+         WCHAR buf[12];
+ 

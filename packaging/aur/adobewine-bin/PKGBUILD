@@ -1,0 +1,36 @@
+# Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
+pkgname=adobewine-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="AdobeWine (prebuilt): Wine 11.18 with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
+arch=(x86_64)
+url="https://github.com/le-birnes/AdobeWine"
+license=(LGPL-2.1-or-later)
+provides=(adobewine)
+conflicts=(adobewine)
+options=(!strip !debug)
+depends=(
+  desktop-file-utils fontconfig freetype2 libgcc gettext glib2 glibc libpcap libunwind
+  libx11 libxcursor libxext libxkbcommon libxi libxrandr systemd-libs wayland
+  vulkan-icd-loader gnutls alsa-lib libpulse gst-plugins-base-libs winetricks curl
+)
+optdepends=(
+  'gst-plugins-good: MP4/MKV media in Premiere Pro, Audition and Media Encoder'
+  'gst-plugins-bad: more media formats'
+  'gst-libav: more media formats'
+  'nvidia-utils: NVIDIA GPU (CUDA, NVENC through nvidia-libs)'
+  'vulkan-intel: Intel GPU'
+  'vulkan-radeon: AMD GPU'
+  'p7zip: application icons for the desktop menu entries'
+  'python-pillow: application icons for the desktop menu entries'
+)
+source=("${url}/releases/download/v${pkgver}/adobewine-${pkgver}-x86_64.tar.zst")
+sha256sums=('SKIP')
+
+package() {
+  cp -a "$srcdir/opt" "$pkgdir/"
+  install -d "$pkgdir/usr/bin"
+  ln -s /opt/adobewine/bin/adobewine "$pkgdir/usr/bin/adobewine"
+  install -Dm644 "$pkgdir/opt/adobewine/README.md" "$pkgdir/usr/share/doc/adobewine/README.md"
+  install -Dm644 "$pkgdir/opt/adobewine/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
