@@ -15,6 +15,7 @@ First steps for any problem:
 | `no AdobeWine runtime` | Install the `adobewine-bin`/`adobewine` package, or run `scripts/build-wine.sh` |
 | The Creative Cloud installer stays on "Loading..." | `adobewine setup` installs wine-gecko; run it again and check its output |
 | The sign-in window is blank or white | Close it, `adobewine fix-signin`, then `adobewine cc` |
+| The small Creative Cloud web installer (about 3 MB) shows only a white window | Reported on Linux Mint ([#2](../../../issues/2)), being investigated. Workaround: use Adobe's Creative Cloud **offline installer** (a full-size download Adobe offers on its Help site; search Adobe Help for "Creative Cloud offline installer") and run it with `adobewine run`. Only use installers from adobe.com |
 | Creative Cloud's Apps tab stays on its placeholder the first time | Click Home, then Apps again |
 | An app says it is not licensed | Sign out and in again in Creative Cloud (avatar menu); the apps take the licence from it |
 
