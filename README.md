@@ -39,8 +39,9 @@ H.264 export took 9.9 s here against 9.1 s on Windows. Details are in
 
 ## Install
 
-- **Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro, Garuda):**
-  `yay -S adobewine`. Then follow [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md).
+- **Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro, Garuda):** the AUR packages
+  `adobewine` / `adobewine-bin` are being submitted. Until then, build the same package from
+  this repository (see [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md)).
 - **Any other distribution:** build from source. See [docs/INSTALL.md](docs/INSTALL.md).
 
 Once installed, the short version is:

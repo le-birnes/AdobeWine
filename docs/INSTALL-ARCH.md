@@ -64,7 +64,19 @@ checkout of the AUR package installs them without building anything.
 
 ## 2. Install AdobeWine
 
-With an AUR helper (`yay` or `paru`):
+> **AUR submission pending.** Until `adobewine` / `adobewine-bin` appear on the AUR, build
+> the same package from this repository:
+>
+> ```sh
+> git clone https://github.com/le-birnes/AdobeWine.git
+> cd AdobeWine/packaging/aur/adobewine && makepkg -si
+> ```
+>
+> or the prebuilt one (downloads the runtime from the
+> [v0.1.0 release](https://github.com/le-birnes/AdobeWine/releases)):
+> `cd AdobeWine/packaging/aur/adobewine-bin && makepkg -si`.
+
+Once on the AUR, with an AUR helper (`yay` or `paru`):
 
 ```sh
 yay -S adobewine-bin        # prebuilt (fast)
