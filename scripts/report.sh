@@ -58,8 +58,18 @@ crash="$([ -n "$LOG" ] && grep -m3 -E 'Unhandled exception|Unhandled page fault|
 tail_log="$([ -n "$LOG" ] && grep -vE '^(info|warn): |:(info|fixme):vkd3d-proton:|libEGL warning|MESA-|pci id for fd|^[[:space:]]*$' "$LOG" | tail -n 120)"
 # memory: totals, the biggest processes (names only, no command lines) and any Wine processes left
 mem="$(free -h 2>/dev/null | sed -n '1,3p')"
-top_rss="$(ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -12 | awk '{printf "%7.0f MB  %s\n", $1/1024, substr($0, index($0,$2))}')"
-wine_left="$(ps -eo comm= 2>/dev/null | grep -ciE '\.exe$|^wineserver|^wine' || true)"
+# Wine renames each process after its current thread ("CrBrowserMain", ...), so take the
+# program name from the command line (C:\...\Illustrator.exe -> Illustrator.exe) instead.
+procs="$(for d in /proc/[0-9]*; do
+  r="$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "$d/status" 2>/dev/null)"; [ -n "$r" ] || continue
+  # only Windows programs (first argument ends in .exe) use it; anything else keeps its short
+  # comm name, so no other program's arguments can end up in a report
+  n="$(tr '\0' '\n' < "$d/cmdline" 2>/dev/null | head -1)"
+  case "$n" in *.exe|*.EXE) n="${n##*[\\/]}" ;; *) n="$(cat "$d/comm" 2>/dev/null)" ;; esac
+  echo "$r $n"
+done)"
+top_rss="$(echo "$procs" | sort -rn | head -12 | awk '{printf "%7.0f MB  %s\n", $1/1024, substr($0, index($0,$2))}')"
+wine_left="$(echo "$procs" | grep -ciE ' [^ ]*\.exe$| wineserver$' || true)"
 shm="$(du -sh /dev/shm 2>/dev/null | cut -f1)"
 
 TS="$(date +%Y%m%d-%H%M%S)"
