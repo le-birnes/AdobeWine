@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # AdobeWine problem/usage report.
-#   adobewine report [--app NAME] [--log FILE] [--note "what you were doing"] [--auto] [--save-only]
+#   adobewine report [--app NAME] [--log FILE] [--note TEXT] [--auto] [--save-only]
+# Without --note it asks you what you were doing.
 #
 # Collects the hardware, drivers, distribution, AdobeWine and Adobe app versions, what was
 # run, and the end of that run's log. Personal data is removed (user and host names, home
@@ -33,6 +34,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$LOG" ] || LOG="$(ls -t "$ADOBEWINE_HOME"/logs/*.log 2>/dev/null | head -1)"
+if [ -z "$NOTE" ] && [ "$AUTO" = 0 ] && [ "$SAVE_ONLY" = 0 ] && [ -t 0 ]; then
+  echo "In a sentence or two: what were you doing, and what went wrong? (Enter to skip)"
+  read -r -p "> " NOTE
+fi
 [ -n "$APP" ] || { [ -n "$LOG" ] && APP="$(basename "$LOG" | sed 's/-[0-9]\{8\}-[0-9]\{6\}\.log$//')"; }
 
 # ---- collect ----
@@ -50,7 +55,12 @@ deps="$(ls -d "$ADOBEWINE_HOME"/deps/*/ 2>/dev/null | xargs -r -n1 basename | tr
 apps="$(ls -d "$WINEPREFIX/drive_c/Program Files/Adobe/"*/ 2>/dev/null | xargs -r -d '\n' -n1 basename | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 ntsync="$([ -e /dev/ntsync ] && echo yes || echo no)"
 crash="$([ -n "$LOG" ] && grep -m3 -E 'Unhandled exception|Unhandled page fault|page fault on|Assertion .* failed' "$LOG" | cut -c1-200)"
-tail_log="$([ -n "$LOG" ] && grep -vE '^(info|warn): |MESA-|pci id for fd|^[[:space:]]*$' "$LOG" | tail -n 120)"
+tail_log="$([ -n "$LOG" ] && grep -vE '^(info|warn): |:(info|fixme):vkd3d-proton:|libEGL warning|MESA-|pci id for fd|^[[:space:]]*$' "$LOG" | tail -n 120)"
+# memory: totals, the biggest processes (names only, no command lines) and any Wine processes left
+mem="$(free -h 2>/dev/null | sed -n '1,3p')"
+top_rss="$(ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -12 | awk '{printf "%7.0f MB  %s\n", $1/1024, substr($0, index($0,$2))}')"
+wine_left="$(ps -eo comm= 2>/dev/null | grep -ciE '\.exe$|^wineserver|^wine' || true)"
+shm="$(du -sh /dev/shm 2>/dev/null | cut -f1)"
 
 TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$ADOBEWINE_HOME/reports"
@@ -78,6 +88,12 @@ OUT="$ADOBEWINE_HOME/reports/report-$TS.md"
   echo '```'
   echo "$gpus"
   echo "$vk"
+  echo '```'
+  echo "**Memory** (when the report was made; Wine processes still running: ${wine_left:-0}, /dev/shm: ${shm:-?})"
+  echo '```'
+  echo "$mem"
+  echo
+  echo "$top_rss"
   echo '```'
   if [ -n "$NOTE" ]; then echo "**What I was doing**"; echo; echo "$NOTE"; echo; fi
   if [ -n "$crash" ]; then echo "**Crash lines**"; echo '```'; echo "$crash"; echo '```'; fi

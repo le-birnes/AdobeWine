@@ -8,8 +8,9 @@ hardware is valuable, positive or negative.
 - **Works for you?** Open a [compatibility report](../../issues/new?template=compatibility.yml)
   with your distribution, GPU and what you tried. "Photoshop 27.10 works on Fedora 42 with
   an RX 7800 XT" is a useful report.
-- **Something broke?** Run `adobewine report --note "what you did"`, which collects the
-  details with personal data removed (see [docs/REPORTING.md](docs/REPORTING.md)), or open a
+- **Something broke?** Run `adobewine report`. It asks what you were doing (for example
+  "opened a 200 MB .ai file, the system froze"), collects the details with personal data
+  removed (see [docs/REPORTING.md](docs/REPORTING.md)), or open a
   [bug report](../../issues/new?template=bug.yml).
 - **Questions, ideas, other Adobe apps**: [Discussions](../../discussions).
 

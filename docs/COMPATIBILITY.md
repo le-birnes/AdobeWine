@@ -52,6 +52,15 @@ H.264/HEVC) work through nvidia-libs.
 | Intel Arc / Xe (ANV) | untested | Iris Xe tested only as display GPU; no Quick Sync through Wine |
 | Hybrid Intel/AMD + NVIDIA | **works (tested)** | AdobeWine enables PRIME offload automatically |
 
+## Community reports
+
+Results from other people's machines. Thank you! Add yours with a
+[compatibility report](../../../issues/new?template=compatibility.yml).
+
+| Report | Distribution | Hardware | Desktop | Apps | Result |
+|---|---|---|---|---|---|
+| [#2](../../../issues/2) | Linux Mint 22.3 (kernel 7.0, built from source) | i7-12700H, 16 GB, Iris Xe + RTX 4060 Laptop, NVIDIA 595.91 | Cinnamon 6.6, X11 | Illustrator 2026 | works well. The Creative Cloud web installer showed a white window (the offline installer worked); high memory use with 16 GB RAM, one freeze (being investigated) |
+
 ## Tested in containers
 
 The release tarball (`adobewine-0.1.0-x86_64.tar.zst`) was installed in clean containers
