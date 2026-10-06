@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: release tag to test (default: latest)
+        description: "release tag to test (default: latest)"
         required: false
 
 jobs:
