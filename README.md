@@ -25,6 +25,15 @@ output is pixel-identical, Audition's normalised audio is bit-identical, and Pre
 H.264 export took 9.9 s here against 9.1 s on Windows. Details are in
 [docs/STATUS.md](docs/STATUS.md).
 
+## Why this exists
+
+I'm not a Wine developer. I needed Adobe's apps for my work and didn't want to keep Windows
+just for them, so I built this for my own laptop, with a lot of help from Claude, an AI
+coding assistant. I'm sharing it because many people want to get off both Windows and
+macOS, keep working with Adobe, and still tinker with their own machines. It has only been
+tested on one machine so far. Your reports, fixes and criticism are what will make it work
+for everyone else.
+
 ## What it is and what it is not
 
 - It **is** a Wine build: open-source patches on top of upstream Wine (LGPL-2.1-or-later),
