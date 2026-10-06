@@ -24,7 +24,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.event.release.tag_name || inputs.tag }}"
-          gh release download ${tag:+"$tag"} -R "$GITHUB_REPOSITORY" -p 'adobewine-*-x86_64.tar.zst' -O adobewine.tar.zst
+          # newest release, pre-releases included ("latest" skips them)
+          [ -n "$tag" ] || tag="$(gh release list -R "$GITHUB_REPOSITORY" -L 1 --json tagName -q '.[0].tagName')"
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'adobewine-*-x86_64.tar.zst' -O adobewine.tar.zst
       - name: check
         run: |
           tests/distro/check.sh adobewine.tar.zst "${{ matrix.image }}" | tee result.txt
