@@ -1,0 +1,34 @@
+name: distro check
+# Installs the release tarball with each distribution's documented runtime dependencies
+# and checks that Wine starts, creates a prefix and runs 64-bit and 32-bit programs.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag to test (default: latest)
+        required: false
+
+jobs:
+  distro:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [archlinux:latest, debian:13, ubuntu:24.04, fedora:42, opensuse/tumbleweed]
+    steps:
+      - uses: actions/checkout@v5
+      - name: download release tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          gh release download ${tag:+"$tag"} -R "$GITHUB_REPOSITORY" -p 'adobewine-*-x86_64.tar.zst' -O adobewine.tar.zst
+      - name: check
+        run: |
+          tests/distro/check.sh adobewine.tar.zst "${{ matrix.image }}" | tee result.txt
+          grep -q '^deps: OK' result.txt
+          grep -q '^wineboot exit: 0' result.txt
+          grep -q '^64-bit: ok64' result.txt
+          grep -q '^32-bit (WoW64): ok32' result.txt

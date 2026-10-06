@@ -51,7 +51,10 @@ If you use a prebuilt runtime (see "Prebuilt runtime" below) you only need what 
 needs to *run*:
 
 ```sh
-# Debian / Ubuntu
+# Debian 13: winetricks is in the "contrib" section; enable it first:
+sudo sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/debian.sources
+sudo apt update
+# Debian / Ubuntu (Ubuntu has winetricks in "universe", enabled by default)
 sudo apt install winetricks curl zstd libvulkan1 libgnutls30 libpulse0 libasound2t64 \
      gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
      gstreamer1.0-libav libfreetype6 libfontconfig1 libunwind8 libxkbcommon0 p7zip-full python3-pil
@@ -59,8 +62,15 @@ sudo apt install winetricks curl zstd libvulkan1 libgnutls30 libpulse0 libasound
 sudo dnf install winetricks curl zstd vulkan-loader gnutls pulseaudio-libs alsa-lib \
      gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free \
      freetype fontconfig libunwind libxkbcommon p7zip python3-pillow
+# openSUSE Tumbleweed
+sudo zypper install winetricks curl zstd libvulkan1 libgnutls30 libpulse0 libasound2 \
+     gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-bad \
+     libfreetype6 fontconfig libunwind8 libxkbcommon0 7zip python313-Pillow
 # Arch: see INSTALL-ARCH.md, section 1.2
 ```
+
+These lines are checked automatically in clean containers (`tests/distro/check.sh`), see
+[COMPATIBILITY.md](COMPATIBILITY.md#tested-in-containers).
 
 ### Prebuilt runtime (experimental outside Arch)
 
@@ -72,6 +82,12 @@ recent glibc it may work:
 sudo tar -C / -xf adobewine-0.1.0-x86_64.tar.zst
 sudo ln -sf /opt/adobewine/bin/adobewine /usr/local/bin/adobewine
 ```
+
+This has been tested on Debian 13, Ubuntu 24.04, Fedora 42 and openSUSE Tumbleweed: Wine
+starts, creates a prefix and runs 64-bit and 32-bit programs. One known limit: the build
+links Wine's FFmpeg media decoder (`winedmo`) against Arch's current FFmpeg (libavcodec 63),
+which those distributions do not ship yet, so video import uses Wine's GStreamer path instead. For video
+work outside Arch, building from source (below) is the better choice.
 
 If `adobewine setup` fails with missing-library or glibc errors, build from source instead.
 

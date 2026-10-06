@@ -52,16 +52,39 @@ H.264/HEVC) work through nvidia-libs.
 | Intel Arc / Xe (ANV) | untested | Iris Xe tested only as display GPU; no Quick Sync through Wine |
 | Hybrid Intel/AMD + NVIDIA | **works (tested)** | AdobeWine enables PRIME offload automatically |
 
+## Tested in containers
+
+The release tarball (`adobewine-0.1.0-x86_64.tar.zst`) was installed in clean containers
+of each distribution, with exactly the runtime dependencies listed in
+[INSTALL.md](INSTALL.md) / [INSTALL-ARCH.md](INSTALL-ARCH.md), and run as a normal user.
+Run it yourself with `tests/distro/check.sh <tarball> [image ...]` (Docker or Podman).
+This checks installation and that Wine works; it cannot check graphics or the Adobe apps,
+which need a real GPU and desktop.
+
+| Distribution (glibc) | Documented deps install | Wine starts | Prefix created | 64-bit / 32-bit (WoW64) programs | Libraries missing |
+|---|---|---|---|---|---|
+| Arch Linux, Oct 2026 (2.44) | yes | yes | yes | yes / yes | none that matter (`libpcsclite`: smart cards only) |
+| Debian 13 trixie (2.41) | yes, after enabling `contrib` | yes | yes | yes / yes | FFmpeg 63 (`winedmo`, see below), `libpcap` (packet capture only) |
+| Ubuntu 24.04 LTS (2.39) | yes | yes | yes | yes / yes | FFmpeg 63, `libpcap` |
+| Fedora 42 (2.41) | yes | yes | yes | yes / yes | FFmpeg 63 |
+| openSUSE Tumbleweed (2.44) | yes | yes | yes | yes / yes | FFmpeg 63 |
+
+FFmpeg: the prebuilt runtime is built on Arch and links Wine's FFmpeg media decoder
+(`winedmo.so`) against libavcodec 63. Where that is missing, Wine uses its GStreamer path
+for video import. Building from source on your distribution links against its own FFmpeg.
+Ubuntu-based (Linux Mint, Pop!_OS, Zorin) and Fedora-based (Nobara, Ultramarine) systems
+use the same packages, but were not tested separately.
+
 ## Linux distributions
 
 | Distribution | Install route | Status |
 |---|---|---|
 | CachyOS | AUR (`adobewine-bin` / `adobewine`) | **tested** |
-| Arch Linux, EndeavourOS, Garuda | AUR | expected to work (same packages) |
+| Arch Linux, EndeavourOS, Garuda | AUR | Arch: runtime tested in a container; desktop use expected to work (same packages) |
 | Manjaro | AUR | expected to work; Manjaro's repositories lag Arch by a few weeks, so build dependencies may be older |
-| Fedora 41+ | build from source | expected to work; `dnf builddep wine` provides the build dependencies |
-| Debian 13, Ubuntu 24.04+, Linux Mint 22+, Pop!_OS | build from source | expected to work; needs `deb-src` enabled for `apt build-dep wine`; Mesa from the distribution may be older (use the kisak/oibaf PPA on Ubuntu for newer RADV/ANV) |
-| openSUSE Tumbleweed | build from source | expected to work |
+| Fedora 41+ | build from source, or prebuilt | prebuilt runtime tested in a container (Fedora 42); desktop use expected to work; `dnf builddep wine` provides the build dependencies |
+| Debian 13, Ubuntu 24.04+, Linux Mint 22+, Pop!_OS | build from source, or prebuilt | prebuilt runtime tested in containers (Debian 13, Ubuntu 24.04); desktop use expected to work; needs `deb-src` enabled for `apt build-dep wine`; Mesa from the distribution may be older (use the kisak/oibaf PPA on Ubuntu for newer RADV/ANV) |
+| openSUSE Tumbleweed | build from source, or prebuilt | prebuilt runtime tested in a container; desktop use expected to work |
 | openSUSE Leap, Debian 12, Ubuntu 22.04 | build from source | unlikely without newer MinGW/Vulkan headers; not recommended |
 | Gentoo | build from source | expected to work with the Wine USE flags for Vulkan, X, GStreamer |
 | NixOS | build from source in a `nix-shell` with Wine's build inputs | untested; a Nix derivation would be welcome |
