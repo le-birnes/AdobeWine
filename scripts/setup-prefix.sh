@@ -62,6 +62,27 @@ elif command -v x86_64-w64-mingw32-gcc >/dev/null; then
 else
   echo "note: no MinGW compiler, skipping the d3d12 shim (Adobe AI features may be unavailable)" >&2
 fi
+# Photoshop's GPU check (sniffer.exe) wants a Direct3D 12 device at feature level 12_0 and
+# reports no GPU at all without one; Camera Raw wants 12_1 on Intel GPUs. vkd3d-proton
+# offers 12_0 only with Vulkan sparse residency, which some drivers lack although the Windows
+# driver for the same GPU offers 12_x (e.g. Mesa on Gen9 Intel graphics). Such GPUs get
+# VKD3D_FEATURE_LEVEL in the prefix's environment: 12_1 when they have the rest of 12_1
+# (ROVs, conservative rasterization), as on Windows, else 12_0. Other GPUs get nothing, as
+# the override would cap them.
+ENVKEY='HKCU\Environment'
+wine reg delete "$ENVKEY" /v VKD3D_FEATURE_LEVEL /f >/dev/null 2>&1 || true
+FL="$ADOBEWINE_SRC/lib/d3d12fl.exe"
+[ -f "$FL" ] || FL="$ADOBEWINE_HOME/d3d12fl.exe"
+if [ ! -f "$FL" ] && command -v x86_64-w64-mingw32-gcc >/dev/null; then
+  x86_64-w64-mingw32-gcc -O2 -o "$FL" "$ADOBEWINE_SRC/tools/d3d12fl/d3d12fl.c"
+fi
+if [ -f "$FL" ]; then
+  levels="$(env -u VKD3D_FEATURE_LEVEL wine "$FL" 2>/dev/null | tr -d '\r')" && rc=0 || rc=$?
+  if [ "$rc" = 2 ]; then
+    wine reg add "$ENVKEY" /v VKD3D_FEATURE_LEVEL /d "${levels##* }" /f >/dev/null
+    echo "note: this GPU offers Direct3D 12 feature level ${levels%% *} only; reporting ${levels##* } so Photoshop and Camera Raw use it." >&2
+  fi
+fi
 # NVIDIA only: CUDA / NVENC / NVAPI / NVML bridges to the Linux driver.
 if [ -e /proc/driver/nvidia/version ]; then
   "$(ls -d "$DEPS"/nvidia-libs-*/ | head -1)/setup_nvlibs.sh" install

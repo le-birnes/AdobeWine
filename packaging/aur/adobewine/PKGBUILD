@@ -52,6 +52,7 @@ build() {
   x86_64-w64-mingw32-gcc -O2 -shared -o d3d12.dll shims/d3d12/d3d12shim.c shims/d3d12/d3d12.def \
       -Wl,--enable-stdcall-fixup
   x86_64-w64-mingw32-gcc -O2 -o winclose.exe tools/winclose/winclose.c
+  x86_64-w64-mingw32-gcc -O2 -o d3d12fl.exe tools/d3d12fl/d3d12fl.c
 }
 
 package() {
@@ -60,7 +61,7 @@ package() {
   cd "$srcdir/AdobeWine-${pkgver}"
   install -d "$pkgdir/opt/adobewine/lib"
   cp -r bin scripts shims tools patches docs README.md LICENSE VERSION "$pkgdir/opt/adobewine/"
-  install -m644 d3d12.dll winclose.exe "$pkgdir/opt/adobewine/lib/"
+  install -m644 d3d12.dll winclose.exe d3d12fl.exe "$pkgdir/opt/adobewine/lib/"
   install -d "$pkgdir/usr/bin"
   ln -s /opt/adobewine/bin/adobewine "$pkgdir/usr/bin/adobewine"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
