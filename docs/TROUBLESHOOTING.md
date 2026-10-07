@@ -24,7 +24,7 @@ First steps for any problem:
 | Symptom | What to do |
 |---|---|
 | Black or empty windows, nothing renders | Check `vulkaninfo --summary` lists your GPU; on hybrid laptops try `ADOBEWINE_NVIDIA_OFFLOAD=1` |
-| Photoshop menu bar missing, UI frozen after start | Segoe UI is missing: `adobewine setup --windows-fonts <your Windows Fonts folder>` |
+| Photoshop menu bar missing or white, UI frozen after start (100 % CPU) | Segoe UI is missing: `adobewine setup --windows-fonts <your Windows Fonts folder>`, or install the Selawik fonts and run `adobewine setup` again |
 | Text in some dialogs is blank | Same as above: add your Windows fonts |
 | A panel draws only after resizing | Please report it with `adobewine report`; resizing the window is the workaround |
 | Wrong scaling on HiDPI screens | `adobewine winecfg` > Graphics > Screen resolution (DPI); 96 = 100 %, 144 = 150 % |
