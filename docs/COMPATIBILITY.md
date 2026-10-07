@@ -95,7 +95,7 @@ use the same packages, but were not tested separately.
 | Debian 13, Ubuntu 24.04+, Linux Mint 22+, Pop!_OS | build from source, or prebuilt | prebuilt runtime tested in containers (Debian 13, Ubuntu 24.04); desktop use expected to work; needs `deb-src` enabled for `apt build-dep wine`; Mesa from the distribution may be older (use the kisak/oibaf PPA on Ubuntu for newer RADV/ANV) |
 | openSUSE Tumbleweed | build from source, or prebuilt | prebuilt runtime tested in a container; desktop use expected to work |
 | openSUSE Leap, Debian 12, Ubuntu 22.04 | build from source | unlikely without newer MinGW/Vulkan headers; not recommended |
-| Gentoo | build from source | expected to work with the Wine USE flags for Vulkan, X, GStreamer |
+| Gentoo | `::snakebyte` overlay (`app-emulation/adobewine`), see [INSTALL-GENTOO.md](INSTALL-GENTOO.md) | Photoshop 2025 starts on one machine (Intel UHD 620, KDE Plasma Wayland); other apps untested |
 | NixOS | build from source in a `nix-shell` with Wine's build inputs | untested; a Nix derivation would be welcome |
 | Fedora Silverblue/Kinoite, Bazzite, SteamOS (Steam Deck) | build and run inside a Distrobox (Arch or Fedora image) | untested; the prefix in `~/.local/share` is shared with the host |
 | Alpine, Void-musl, Chimera | not supported | musl |

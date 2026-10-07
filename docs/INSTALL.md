@@ -2,7 +2,8 @@
 
 This guide is for any Linux distribution. On Arch Linux or an Arch-based distribution
 (CachyOS, EndeavourOS, Manjaro, Garuda), use the AUR package instead:
-[INSTALL-ARCH.md](INSTALL-ARCH.md).
+[INSTALL-ARCH.md](INSTALL-ARCH.md). On Gentoo, use the Portage packages:
+[INSTALL-GENTOO.md](INSTALL-GENTOO.md).
 
 You need:
 
