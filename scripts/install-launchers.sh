@@ -12,6 +12,10 @@ if [ "${1:-}" = --remove ]; then
 fi
 mkdir -p "$APPS" "$ICONS"
 PF="$WINEPREFIX/drive_c/Program Files/Adobe"
+latest() {  # newest installed release folder of an app, e.g. "Adobe Photoshop 2025"
+  local d; d="$(ls -d "$PF/$1 20"[0-9][0-9] 2>/dev/null | sort -V | tail -1)"
+  basename "${d:-$1 2026}"
+}
 icon() {  # icon <name> <exe>: largest icon from the .exe, or an .ico next to it
   local tmp; tmp="$(mktemp -d)"
   if command -v 7z >/dev/null; then 7z x -y -o"$tmp" "$2" '.rsrc/ICON/*' '.rsrc/*/ICON/*' >/dev/null 2>&1 || true; fi
@@ -20,7 +24,7 @@ icon() {  # icon <name> <exe>: largest icon from the .exe, or an .ico next to it
 import sys, glob, os
 from PIL import Image
 best = None
-for f in glob.glob(os.path.join(sys.argv[1], '**', '*.ico'), recursive=True):
+for f in glob.glob(os.path.join(sys.argv[1], '**', '*.ico'), recursive=True, include_hidden=True):
     try:
         im = Image.open(f); size = max(im.info.get('sizes', {im.size}))
         if not best or size > best[0]: best = (size, f)
@@ -47,11 +51,11 @@ StartupWMClass=$5
 EOF
   echo "added $2"
 }
-entry photoshop "Adobe Photoshop" "Graphics;2DGraphics;RasterGraphics;" "image/vnd.adobe.photoshop;image/png;image/jpeg;image/tiff;" photoshop.exe "$PF/Adobe Photoshop 2026/Photoshop.exe"
-entry illustrator "Adobe Illustrator" "Graphics;2DGraphics;VectorGraphics;" "application/illustrator;application/postscript;image/svg+xml;application/pdf;" illustrator.exe "$PF/Adobe Illustrator 2026/Support Files/Contents/Windows/Illustrator.exe"
-entry premiere "Adobe Premiere Pro" "AudioVideo;Video;AudioVideoEditing;" "" "adobe premiere pro.exe" "$PF/Adobe Premiere Pro 2026/Adobe Premiere Pro.exe"
-entry audition "Adobe Audition" "AudioVideo;Audio;AudioVideoEditing;" "audio/x-wav;audio/wav;audio/mpeg;audio/flac;" "adobe audition.exe" "$PF/Adobe Audition 2026/Adobe Audition.exe"
-entry encoder "Adobe Media Encoder" "AudioVideo;Video;" "" "adobe media encoder.exe" "$PF/Adobe Media Encoder 2026/Adobe Media Encoder.exe"
+entry photoshop "Adobe Photoshop" "Graphics;2DGraphics;RasterGraphics;" "image/vnd.adobe.photoshop;image/png;image/jpeg;image/tiff;" photoshop.exe "$PF/$(latest "Adobe Photoshop")/Photoshop.exe"
+entry illustrator "Adobe Illustrator" "Graphics;2DGraphics;VectorGraphics;" "application/illustrator;application/postscript;image/svg+xml;application/pdf;" illustrator.exe "$PF/$(latest "Adobe Illustrator")/Support Files/Contents/Windows/Illustrator.exe"
+entry premiere "Adobe Premiere Pro" "AudioVideo;Video;AudioVideoEditing;" "" "adobe premiere pro.exe" "$PF/$(latest "Adobe Premiere Pro")/Adobe Premiere Pro.exe"
+entry audition "Adobe Audition" "AudioVideo;Audio;AudioVideoEditing;" "audio/x-wav;audio/wav;audio/mpeg;audio/flac;" "adobe audition.exe" "$PF/$(latest "Adobe Audition")/Adobe Audition.exe"
+entry encoder "Adobe Media Encoder" "AudioVideo;Video;" "" "adobe media encoder.exe" "$PF/$(latest "Adobe Media Encoder")/Adobe Media Encoder.exe"
 entry cc "Adobe Creative Cloud" "Graphics;" "" "creative cloud.exe" "$PF/Adobe Creative Cloud/ACC/Creative Cloud.exe"
 cat > "$APPS/adobewine-off.desktop" <<EOF
 [Desktop Entry]
