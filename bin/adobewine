@@ -10,13 +10,19 @@
 #   adobewine winecfg|regedit|shell           Wine tools for this prefix
 source "$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/bin/env.sh"
 P='C:\Program Files\Adobe'
+# Newest installed release of an app folder ("Adobe Photoshop 2025", "... 2026"), so an
+# older version chosen in Creative Cloud works too.
+latest() {
+  local d; d="$(ls -d "$WINEPREFIX/drive_c/Program Files/Adobe/$1 20"[0-9][0-9] 2>/dev/null | sort -V | tail -1)"
+  basename "${d:-$1 2026}"
+}
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
-  photoshop)   exe="$P\\Adobe Photoshop 2026\\Photoshop.exe" ;;
-  illustrator) exe="$P\\Adobe Illustrator 2026\\Support Files\\Contents\\Windows\\Illustrator.exe" ;;
-  premiere)    exe="$P\\Adobe Premiere Pro 2026\\Adobe Premiere Pro.exe" ;;
-  audition)    exe="$P\\Adobe Audition 2026\\Adobe Audition.exe" ;;
-  encoder)     exe="$P\\Adobe Media Encoder 2026\\Adobe Media Encoder.exe" ;;
+  photoshop)   exe="$P\\$(latest "Adobe Photoshop")\\Photoshop.exe" ;;
+  illustrator) exe="$P\\$(latest "Adobe Illustrator")\\Support Files\\Contents\\Windows\\Illustrator.exe" ;;
+  premiere)    exe="$P\\$(latest "Adobe Premiere Pro")\\Adobe Premiere Pro.exe" ;;
+  audition)    exe="$P\\$(latest "Adobe Audition")\\Adobe Audition.exe" ;;
+  encoder)     exe="$P\\$(latest "Adobe Media Encoder")\\Adobe Media Encoder.exe" ;;
   cc)          exe="$P\\Adobe Creative Cloud\\ACC\\Creative Cloud.exe" ;;
   run)         exe="$1"; shift ;;
   setup)       exec "$ADOBEWINE_SRC/scripts/setup-prefix.sh" "$@" ;;
