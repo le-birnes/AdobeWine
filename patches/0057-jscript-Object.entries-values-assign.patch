@@ -1,0 +1,415 @@
+jscript: Implement Object.entries, Object.values and Object.assign.
+Found by NickPittas in AdobeWine issue #2.
+
+diff --git a/dlls/jscript/object.c b/dlls/jscript/object.c
+index 9812b27..dcdebe8 100644
+--- a/dlls/jscript/object.c
++++ b/dlls/jscript/object.c
+@@ -927,6 +927,237 @@ static HRESULT Object_getOwnPropertyNames(script_ctx_t *ctx, jsval_t vthis, WORD
+     return object_keys(ctx, arg, JSDISP_ENUM_OWN, r);
+ }
+ 
++static HRESULT get_own_enumerable_keys(jsdisp_t *obj, jsstr_t ***ret, unsigned *ret_cnt)
++{
++    DISPID id = DISPID_STARTENUM;
++    unsigned cnt = 0, size = 0;
++    jsstr_t **keys = NULL, **new_keys;
++    HRESULT hres;
++
++    for(;;) {
++        hres = jsdisp_next_prop(obj, id, JSDISP_ENUM_OWN_ENUMERABLE, &id);
++        if(hres != S_OK)
++            break;
++
++        if(cnt == size) {
++            size = size ? size * 2 : 16;
++            if(!(new_keys = realloc(keys, size * sizeof(*keys)))) {
++                hres = E_OUTOFMEMORY;
++                break;
++            }
++            keys = new_keys;
++        }
++
++        hres = jsdisp_get_prop_name(obj, id, &keys[cnt]);
++        if(FAILED(hres))
++            break;
++        cnt++;
++    }
++
++    if(FAILED(hres)) {
++        while(cnt)
++            jsstr_release(keys[--cnt]);
++        free(keys);
++        return hres;
++    }
++
++    *ret = keys;
++    *ret_cnt = cnt;
++    return S_OK;
++}
++
++static void release_keys(jsstr_t **keys, unsigned cnt)
++{
++    while(cnt)
++        jsstr_release(keys[--cnt]);
++    free(keys);
++}
++
++/* Gets the value of an own property if it still exists and is enumerable,
++ * returns S_FALSE otherwise. */
++static HRESULT get_own_enumerable_value(jsdisp_t *obj, jsstr_t *key, jsval_t *val)
++{
++    property_desc_t desc;
++    const WCHAR *name;
++    HRESULT hres;
++
++    if(!(name = jsstr_flatten(key)))
++        return E_OUTOFMEMORY;
++
++    hres = jsdisp_get_own_property(obj, name, TRUE, &desc);
++    if(hres == DISP_E_UNKNOWNNAME)
++        return S_FALSE;
++    if(FAILED(hres))
++        return hres;
++    if(!(desc.flags & PROPF_ENUMERABLE))
++        return S_FALSE;
++
++    return jsdisp_propget_name(obj, name, val);
++}
++
++static HRESULT object_entries(script_ctx_t *ctx, jsval_t arg, BOOL values_only, jsval_t *r)
++{
++    jsdisp_t *obj, *array = NULL, *entry;
++    unsigned i, cnt, len = 0;
++    jsstr_t **keys;
++    IDispatch *disp;
++    jsval_t val;
++    HRESULT hres;
++
++    hres = to_object(ctx, arg, &disp);
++    if(FAILED(hres))
++        return hres;
++
++    if(!(obj = to_jsdisp(disp))) {
++        FIXME("Non-JS object\n");
++        IDispatch_Release(disp);
++        return E_NOTIMPL;
++    }
++
++    hres = get_own_enumerable_keys(obj, &keys, &cnt);
++    if(FAILED(hres)) {
++        jsdisp_release(obj);
++        return hres;
++    }
++
++    hres = create_array(ctx, 0, &array);
++    for(i = 0; SUCCEEDED(hres) && i < cnt; i++) {
++        hres = get_own_enumerable_value(obj, keys[i], &val);
++        if(hres != S_OK)
++            continue;
++
++        if(!values_only) {
++            hres = create_array(ctx, 0, &entry);
++            if(SUCCEEDED(hres)) {
++                hres = jsdisp_propput_idx(entry, 0, jsval_string(keys[i]));
++                if(SUCCEEDED(hres))
++                    hres = jsdisp_propput_idx(entry, 1, val);
++                jsval_release(val);
++                if(FAILED(hres)) {
++                    jsdisp_release(entry);
++                    break;
++                }
++                val = jsval_obj(entry);
++            }else {
++                jsval_release(val);
++                break;
++            }
++        }
++
++        hres = jsdisp_propput_idx(array, len++, val);
++        jsval_release(val);
++    }
++    if(hres == S_FALSE)
++        hres = S_OK;
++
++    release_keys(keys, cnt);
++    jsdisp_release(obj);
++    if(FAILED(hres)) {
++        if(array)
++            jsdisp_release(array);
++        return hres;
++    }
++
++    if(r)
++        *r = jsval_obj(array);
++    else
++        jsdisp_release(array);
++    return S_OK;
++}
++
++static HRESULT Object_entries(script_ctx_t *ctx, jsval_t vthis, WORD flags,
++                              unsigned argc, jsval_t *argv, jsval_t *r)
++{
++    jsval_t arg = argc ? argv[0] : jsval_undefined();
++
++    TRACE("(%s)\n", debugstr_jsval(arg));
++
++    return object_entries(ctx, arg, FALSE, r);
++}
++
++static HRESULT Object_values(script_ctx_t *ctx, jsval_t vthis, WORD flags,
++                             unsigned argc, jsval_t *argv, jsval_t *r)
++{
++    jsval_t arg = argc ? argv[0] : jsval_undefined();
++
++    TRACE("(%s)\n", debugstr_jsval(arg));
++
++    return object_entries(ctx, arg, TRUE, r);
++}
++
++static HRESULT Object_assign(script_ctx_t *ctx, jsval_t vthis, WORD flags,
++                             unsigned argc, jsval_t *argv, jsval_t *r)
++{
++    IDispatch *target, *source_disp;
++    jsdisp_t *source, *target_obj;
++    unsigned i, j, cnt;
++    jsstr_t **keys;
++    jsval_t val;
++    HRESULT hres;
++
++    TRACE("(%s)\n", debugstr_jsval(argc ? argv[0] : jsval_undefined()));
++
++    hres = to_object(ctx, argc ? argv[0] : jsval_undefined(), &target);
++    if(FAILED(hres))
++        return hres;
++    target_obj = to_jsdisp(target);
++
++    for(i = 1; i < argc; i++) {
++        if(is_undefined(argv[i]) || is_null(argv[i]))
++            continue;
++
++        hres = to_object(ctx, argv[i], &source_disp);
++        if(FAILED(hres))
++            break;
++
++        if(!(source = to_jsdisp(source_disp))) {
++            FIXME("Non-JS source object\n");
++            IDispatch_Release(source_disp);
++            hres = E_NOTIMPL;
++            break;
++        }
++
++        hres = get_own_enumerable_keys(source, &keys, &cnt);
++        if(FAILED(hres)) {
++            jsdisp_release(source);
++            break;
++        }
++
++        for(j = 0; j < cnt; j++) {
++            hres = get_own_enumerable_value(source, keys[j], &val);
++            if(FAILED(hres))
++                break;
++            if(hres == S_FALSE)
++                continue;
++
++            if(target_obj)
++                hres = jsdisp_propput(target_obj, jsstr_flatten(keys[j]),
++                                      PROPF_ENUMERABLE | PROPF_CONFIGURABLE | PROPF_WRITABLE, TRUE, val);
++            else
++                hres = disp_propput_name(ctx, target, jsstr_flatten(keys[j]), val);
++            jsval_release(val);
++            if(FAILED(hres))
++                break;
++        }
++
++        release_keys(keys, cnt);
++        jsdisp_release(source);
++        if(FAILED(hres))
++            break;
++    }
++
++    if(FAILED(hres)) {
++        IDispatch_Release(target);
++        return hres;
++    }
++
++    if(r)
++        *r = jsval_disp(target);
++    else
++        IDispatch_Release(target);
++    return S_OK;
++}
++
+ static HRESULT Object_preventExtensions(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv, jsval_t *r)
+ {
+     jsdisp_t *obj;
+@@ -1059,9 +1290,11 @@ static HRESULT Object_isSealed(script_ctx_t *ctx, jsval_t vthis, WORD flags, uns
+ }
+ 
+ static const builtin_prop_t ObjectConstr_props[] = {
++    {L"assign",                   Object_assign,                      PROPF_ES5|PROPF_METHOD|2},
+     {L"create",                   Object_create,                      PROPF_ES5|PROPF_METHOD|2},
+     {L"defineProperties",         Object_defineProperties,            PROPF_ES5|PROPF_METHOD|2},
+     {L"defineProperty",           Object_defineProperty,              PROPF_ES5|PROPF_METHOD|2},
++    {L"entries",                  Object_entries,                     PROPF_ES5|PROPF_METHOD|1},
+     {L"freeze",                   Object_freeze,                      PROPF_ES5|PROPF_METHOD|1},
+     {L"getOwnPropertyDescriptor", Object_getOwnPropertyDescriptor,    PROPF_ES5|PROPF_METHOD|2},
+     {L"getOwnPropertyNames",      Object_getOwnPropertyNames,         PROPF_ES5|PROPF_METHOD|1},
+@@ -1072,6 +1305,7 @@ static const builtin_prop_t ObjectConstr_props[] = {
+     {L"keys",                     Object_keys,                        PROPF_ES5|PROPF_METHOD|1},
+     {L"preventExtensions",        Object_preventExtensions,           PROPF_ES5|PROPF_METHOD|1},
+     {L"seal",                     Object_seal,                        PROPF_ES5|PROPF_METHOD|1},
++    {L"values",                   Object_values,                      PROPF_ES5|PROPF_METHOD|1},
+ };
+ 
+ static const builtin_info_t ObjectConstr_info = {
+diff --git a/dlls/jscript/tests/api.js b/dlls/jscript/tests/api.js
+index a6ac3c7..d133ea4 100644
+--- a/dlls/jscript/tests/api.js
++++ b/dlls/jscript/tests/api.js
+@@ -285,6 +285,9 @@ ok(unescape(escape(tmp)) === tmp, "unescape(escape('" + tmp + "')) = " + unescap
+ 
+ ok(Object.prototype.hasOwnProperty('toString'), "Object.prototype.hasOwnProperty('toString') is false");
+ ok(Object.prototype.hasOwnProperty('isPrototypeOf'), "Object.prototype.hasOwnProperty('isPrototypeOf') is false");
++ok(!("entries" in Object), "Object.entries is available in legacy mode");
++ok(!("values" in Object), "Object.values is available in legacy mode");
++ok(!("assign" in Object), "Object.assign is available in legacy mode");
+ ok(Function.prototype.hasOwnProperty('call'), "Function.prototype.hasOwnProperty('call') is false");
+ ok(!Function.prototype.hasOwnProperty('caller'), "Function.prototype.hasOwnProperty('caller') is true");
+ ok(!Function.prototype.hasOwnProperty('arguments'), "Function.prototype.hasOwnProperty('arguments') is true");
+diff --git a/dlls/mshtml/tests/es5.js b/dlls/mshtml/tests/es5.js
+index b550d99..b313c17 100644
+--- a/dlls/mshtml/tests/es5.js
++++ b/dlls/mshtml/tests/es5.js
+@@ -1493,6 +1493,131 @@ sync_test("keys", function() {
+     }
+ });
+ 
++sync_test("Object.entries", function() {
++    var o, r, getter_calls = 0;
++
++    if(!Object.entries) {
++        win_skip("Object.entries not supported");
++        return;
++    }
++
++    ok(Object.entries.length === 1, "Object.entries.length = " + Object.entries.length);
++    ok(Object.values.length === 1, "Object.values.length = " + Object.values.length);
++    ok(!Object.prototype.propertyIsEnumerable.call(Object, "entries"), "Object.entries is enumerable");
++
++    o = { a: 1, b: "x" };
++    o.c = null;
++    Object.defineProperty(o, "hidden", { value: 3, enumerable: false });
++    Object.defineProperty(o, "getter", { get: function() { getter_calls++; return 42; }, enumerable: true });
++
++    r = Object.entries(o);
++    ok(Array.isArray(r), "entries did not return an array");
++    ok(r.length === 4, "entries length = " + r.length);
++    ok(Array.isArray(r[0]) && r[0].length === 2, "entries[0] = " + r[0]);
++    ok(r[0][0] === "a" && r[0][1] === 1, "entries[0] = " + r[0]);
++    ok(r[1][0] === "b" && r[1][1] === "x", "entries[1] = " + r[1]);
++    ok(r[2][0] === "c" && r[2][1] === null, "entries[2] = " + r[2]);
++    ok(r[3][0] === "getter" && r[3][1] === 42, "entries[3] = " + r[3]);
++    ok(getter_calls === 1, "getter_calls = " + getter_calls);
++
++    r = Object.values(o);
++    ok(r.join() === "1,x,,42", "values = " + r.join());
++    ok(getter_calls === 2, "getter_calls = " + getter_calls);
++
++    r = Object.entries(Object.create({ inherited: 1 }));
++    ok(r.length === 0, "entries of object with inherited prop length = " + r.length);
++    r = Object.values([ "p", "q" ]);
++    ok(r.join() === "p,q", "values of array = " + r.join());
++    r = Object.entries(function() {});
++    ok(r.length === 0, "entries of function length = " + r.length);
++
++    /* a property deleted by an earlier getter is skipped */
++    o = {};
++    Object.defineProperty(o, "first", { get: function() { delete o.second; return 1; }, enumerable: true, configurable: true });
++    o.second = 2;
++    r = Object.values(o);
++    ok(r.join() === "1", "values with deleting getter = " + r.join());
++
++    r = Object.entries(42);
++    ok(r.length === 0, "entries(42) length = " + r.length);
++
++    try {
++        Object.entries(undefined);
++        ok(false, "expected exception calling entries(undefined)");
++    }catch(ex) {
++        var n = ex.number >>> 0;
++        ok(n === JS_E_OBJECT_EXPECTED, "entries(undefined) threw " + n);
++    }
++    try {
++        Object.values(null);
++        ok(false, "expected exception calling values(null)");
++    }catch(ex) {
++        var n = ex.number >>> 0;
++        ok(n === JS_E_OBJECT_EXPECTED, "values(null) threw " + n);
++    }
++});
++
++sync_test("Object.assign", function() {
++    var target, r, log = "";
++
++    if(!Object.assign) {
++        win_skip("Object.assign not supported");
++        return;
++    }
++
++    ok(Object.assign.length === 2, "Object.assign.length = " + Object.assign.length);
++
++    target = { a: 1, b: 1 };
++    r = Object.assign(target, { b: 2, c: 2 }, null, undefined, { c: 3, d: 3 });
++    ok(r === target, "assign did not return target");
++    ok(target.a === 1 && target.b === 2 && target.c === 3 && target.d === 3,
++       "target = " + target.a + "," + target.b + "," + target.c + "," + target.d);
++
++    /* only own enumerable properties are copied, through the getter */
++    var src = Object.create({ inherited: 1 });
++    src.own = 1;
++    Object.defineProperty(src, "hidden", { value: 1, enumerable: false });
++    Object.defineProperty(src, "getter", { get: function() { log += "get;"; return 5; }, enumerable: true });
++    target = {};
++    Object.defineProperty(target, "getter", { set: function(v) { log += "set " + v + ";"; }, enumerable: true });
++    Object.assign(target, src);
++    ok(target.own === 1, "target.own = " + target.own);
++    ok(!("inherited" in target), "inherited prop copied");
++    ok(!("hidden" in target), "non-enumerable prop copied");
++    ok(log === "get;set 5;", "log = " + log);
++
++    r = Object.assign({}, [ "x", "y" ]);
++    ok(r[0] === "x" && r[1] === "y", "assign from array = " + r[0] + "," + r[1]);
++
++    r = Object.assign(1);
++    ok(typeof(r) === "object" && r.valueOf() === 1, "assign(1) = " + r);
++    r = Object.assign("s");
++    ok(typeof(r) === "object" && r.valueOf() === "s", "assign(\"s\") = " + r);
++
++    try {
++        Object.assign(null, {});
++        ok(false, "expected exception calling assign(null)");
++    }catch(ex) {
++        var n = ex.number >>> 0;
++        ok(n === JS_E_OBJECT_EXPECTED, "assign(null) threw " + n);
++    }
++    try {
++        Object.assign();
++        ok(false, "expected exception calling assign()");
++    }catch(ex) {
++        var n = ex.number >>> 0;
++        ok(n === JS_E_OBJECT_EXPECTED, "assign() threw " + n);
++    }
++
++    target = Object.freeze({});
++    try {
++        Object.assign(target, { a: 1 });
++        ok(false, "expected exception assigning to frozen object");
++    }catch(ex) {
++        ok(ex.name === "TypeError", "assign to frozen object threw " + ex.name);
++    }
++});
++
+ sync_test("getOwnPropertyNames", function() {
+     var o = { a: 1, b: 2, c: 3 };
+     var names = Object.getOwnPropertyNames(o).sort().join();

@@ -25,6 +25,7 @@ optdepends=(
   'nvidia-utils: NVIDIA GPU (CUDA, NVENC through nvidia-libs)'
   'vulkan-intel: Intel GPU'
   'vulkan-radeon: AMD GPU'
+  'inotify-tools: fix for the Creative Cloud web installer white window (until 0.2.0)'
   'p7zip: application icons for the desktop menu entries'
   'python-pillow: application icons for the desktop menu entries'
 )

@@ -13,8 +13,10 @@
 - Gentoo install guide for the `::snakebyte` overlay (switch87, #7).
 - Patch 0043 fixed: a program that added a font itself and then listed fonts could lose a font
   family or hang (found by Wine's own gdi32 tests).
-- Creative Cloud web installer 2.14.0.82: blank white window diagnosed by NickPittas (#2);
-  fix in progress.
+- Creative Cloud web installer 2.14.0.82 no longer shows a blank white window: patches 0055-0057
+  (mshtml ChildNode methods and `indeterminate`, jscript `Object.entries/values/assign`), and a
+  launcher workaround for current runtimes based on NickPittas' polyfill. Cause found by
+  NickPittas (#2).
 
 ## 0.1.0 - first public testing release
 

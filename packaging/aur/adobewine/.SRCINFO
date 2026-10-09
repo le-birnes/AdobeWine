@@ -54,6 +54,7 @@ pkgbase = adobewine
 	optdepends = nvidia-utils: NVIDIA GPU (CUDA, NVENC through nvidia-libs)
 	optdepends = vulkan-intel: Intel GPU
 	optdepends = vulkan-radeon: AMD GPU
+	optdepends = inotify-tools: fix for the Creative Cloud web installer white window (until 0.2.0)
 	optdepends = p7zip: application icons for the desktop menu entries
 	optdepends = python-pillow: application icons for the desktop menu entries
 	options = !lto
