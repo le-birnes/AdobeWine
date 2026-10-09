@@ -86,7 +86,17 @@ if [ -n "$WINFONTS" ]; then
   [ -d "$WINFONTS" ] || { echo "not a folder: $WINFONTS" >&2; exit 1; }
   cp -n "$WINFONTS"/*.[tToO][tT][fFcC] "$WINEPREFIX/drive_c/windows/Fonts/" 2>/dev/null || true
 elif ! ls "$WINEPREFIX/drive_c/windows/Fonts/"segoeui.ttf >/dev/null 2>&1; then
-  echo "note: Segoe UI is missing. Run again with --windows-fonts <your Windows Fonts folder>." >&2
+  # No Windows fonts: Segoe UI made from Selawik, Microsoft's open metric-compatible
+  # fallback, if the system has it. It must really be named "Segoe UI": DirectWrite ignores
+  # FontSubstitutes, and Photoshop's menu bar hangs the UI without that family.
+  mapfile -t selawik < <(fc-list -f '%{file}\n' :family=Selawik 2>/dev/null)
+  if [ "${#selawik[@]}" -gt 0 ] &&
+     python3 "$ADOBEWINE_SRC/scripts/selawik-as-segoe.py" "$WINEPREFIX/drive_c/windows/Fonts" "${selawik[@]}" >/dev/null; then
+    echo "note: no Windows fonts given; Segoe UI was made from Selawik." >&2
+  else
+    echo "note: Segoe UI is missing. Run again with --windows-fonts <your Windows Fonts folder>," >&2
+    echo "      or install the Selawik fonts and run setup again." >&2
+  fi
 fi
 "$ADOBEWINE_SRC/scripts/register-fonts.sh"
 wineserver -w

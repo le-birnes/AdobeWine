@@ -13,7 +13,8 @@ You need:
 - for the best results, **fonts from your own Windows installation** (a Windows
   partition, or a copy of `C:\Windows\Fonts`). Adobe's interface uses Segoe UI, and
   Photoshop's menu bar crashes without it. Fonts are not included because they are
-  Microsoft's and cannot be redistributed.
+  Microsoft's and cannot be redistributed. Without them, setup makes Segoe UI from
+  Microsoft's open fallback font Selawik if your distribution has it installed.
 
 Nothing is installed system-wide. The Wine build, the downloads and the Windows prefix all
 live in `~/.local/share/adobewine` (change it with the `ADOBEWINE_HOME` variable).
@@ -118,7 +119,8 @@ adobewine setup --windows-fonts /mnt/windows/Windows/Fonts
 This downloads DXVK, vkd3d-proton and (on NVIDIA) nvidia-libs, checks their checksums,
 installs wine-gecko, wine-mono, Microsoft's shader compiler and the core fonts through
 winetricks, and applies the settings the Adobe apps need. Leave out `--windows-fonts` if
-you have no Windows fonts at hand; you can run the command again later with it.
+you have no Windows fonts at hand; setup then makes Segoe UI from Selawik when that font is
+installed, and you can run the command again later with your Windows fonts.
 
 ## 4. Install Creative Cloud and sign in
 
