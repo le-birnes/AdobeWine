@@ -17,6 +17,10 @@
   (mshtml ChildNode methods and `indeterminate`, jscript `Object.entries/values/assign`), and a
   launcher workaround for current runtimes based on NickPittas' polyfill. Cause found by
   NickPittas (#2).
+- Experimental, off by default: Windows file dialogs can use your desktop's own file picker
+  (XDG portal) with `WINE_FORCE_PORTAL=1`; After Effects' import options show in it. Patches
+  0060a/0060b, ported from NickPittas' AE4Linux (LGPL-2.1+) and Wine merge request 10060 by
+  Alexander Wilms.
 
 ## 0.1.0 - first public testing release
 

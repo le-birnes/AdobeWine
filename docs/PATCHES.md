@@ -65,3 +65,5 @@ to WineHQ; help with that is very welcome.
 | 0056 | mshtml | HTMLInputElement indeterminate is stored instead of E_NOTIMPL (NickPittas, #2) | AdobeWine |
 | 0057 | jscript | Object.entries, Object.values, Object.assign in ES5+ modes (NickPittas, #2) | AdobeWine |
 | 0058 | win32u | Implement DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL | switch87 |
+| 0060a | comdlg32 | Experimental: XDG desktop portal file dialogs (your desktop's own file picker), off unless `WINE_FORCE_PORTAL=1` or `HKCU\Software\Wine\X11 Driver\FileDialogPortal` = `always`/`auto` | NickPittas (AE4Linux); Wine MR 10060 by Alexander Wilms |
+| 0060b | comdlg32 | Portal dialogs: custom controls as choices (After Effects Import As / Sequence), document portal host paths | NickPittas (AE4Linux) |
