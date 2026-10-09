@@ -54,11 +54,19 @@ for a in "$@"; do
 done
 # Creative Cloud (Chromium): with GPU vsync a page change can stay off screen until a repaint.
 [ "$cmd" = cc ] && args=(--disable-gpu-vsync "${args[@]}")
+# TEMPORARY until Wine patches 0055-0057 ship in a release: the Creative Cloud web installer
+# 2.14.0.82 shows a blank white window (issue #2); a polyfill is injected into its page.
+name="${exe##*[/\\]}"
+if [ "$cmd" = run ] && [[ "${name,,}" == creative_cloud_set-up*.exe ]]; then
+  source "$ADOBEWINE_SRC/scripts/cc-installer-polyfill.sh"
+  cc_polyfill_start
+fi
 log="$ADOBEWINE_HOME/logs/$cmd-$(date +%Y%m%d-%H%M%S).log"
 echo "log: $log"
 start=$SECONDS
 wine "$exe" "${args[@]}" > "$log" 2>&1
 rc=$?
+[ -n "${CC_POLYFILL_PID:-}" ] && cc_polyfill_stop
 # After a crash: offer a report (REPORTS=ask, the default), send it (REPORTS=auto) or do
 # nothing (REPORTS=off), as set in ~/.config/adobewine/config.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/adobewine/config"

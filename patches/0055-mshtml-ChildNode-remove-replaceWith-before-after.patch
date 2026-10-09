@@ -1,0 +1,609 @@
+mshtml: Implement ChildNode remove(), replaceWith(), before() and after().
+Found by NickPittas in AdobeWine issue #2.
+
+diff --git a/dlls/mshtml/htmldoc.c b/dlls/mshtml/htmldoc.c
+index 583e34c..dd843be 100644
+--- a/dlls/mshtml/htmldoc.c
++++ b/dlls/mshtml/htmldoc.c
+@@ -306,13 +306,19 @@ static const tid_t DocumentType_iface_tids[] = {
+     0
+ };
+ 
++static void DocumentType_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
++{
++    HTMLDOMNode_init_dispex_info(info, mode);
++    ChildNode_init_dispex_info(info, mode);
++}
++
+ dispex_static_data_t DocumentType_dispex = {
+     .id           = OBJID_DocumentType,
+     .prototype_id = OBJID_Node,
+     .vtbl         = &DocumentType_event_target_vtbl.dispex_vtbl,
+     .disp_tid     = DispDOMDocumentType_tid,
+     .iface_tids   = DocumentType_iface_tids,
+-    .init_info    = HTMLDOMNode_init_dispex_info,
++    .init_info    = DocumentType_init_dispex_info,
+ };
+ 
+ HRESULT create_doctype_node(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLDOMNode **ret)
+diff --git a/dlls/mshtml/htmlelem.c b/dlls/mshtml/htmlelem.c
+index e3920b6..7f377fc 100644
+--- a/dlls/mshtml/htmlelem.c
++++ b/dlls/mshtml/htmlelem.c
+@@ -6778,6 +6778,7 @@ void HTMLElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+     dispex_info_add_interface(info, IHTMLElement4_tid, NULL);
+     dispex_info_add_interface(info, IHTMLDOMNode_tid, NULL);
+     dispex_info_add_interface(info, IHTMLUniqueName_tid, unique_name_noattr_hooks);
++    ChildNode_init_dispex_info(info, mode);
+ }
+ 
+ static const event_target_vtbl_t HTMLElement_event_target_vtbl = {
+@@ -7397,6 +7398,7 @@ static void Element_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+     dispex_info_add_dispids(info, IHTMLElement4_tid, elem4_dispids);
+     dispex_info_add_interface(info, IElementSelector_tid, NULL);
+     dispex_info_add_interface(info, IElementTraversal_tid, elem_traversal_noattr_hooks);
++    ChildNode_init_dispex_info(info, mode);
+ }
+ 
+ dispex_static_data_t Element_dispex = {
+diff --git a/dlls/mshtml/htmlnode.c b/dlls/mshtml/htmlnode.c
+index 7a43f19..6573353 100644
+--- a/dlls/mshtml/htmlnode.c
++++ b/dlls/mshtml/htmlnode.c
+@@ -1108,6 +1108,337 @@ static const IWineHTMLDOMNodePrivateVtbl HTMLDOMNode_private_vtbl = {
+     HTMLDOMNode_private_normalize,
+ };
+ 
++enum child_node_insert {
++    CHILD_NODE_BEFORE,
++    CHILD_NODE_AFTER,
++    CHILD_NODE_REPLACE_WITH
++};
++
++/* Converts an argument of ChildNode methods to a Gecko node: nodes are used as they are,
++ * anything else is converted to a string and becomes a new text node. */
++static HRESULT child_node_arg_to_nsnode(nsIDOMDocument *nsdoc, VARIANT *arg, IServiceProvider *caller,
++                                        nsIDOMNode **ret)
++{
++    nsIDOMText *nstext;
++    nsAString str;
++    VARIANT bstr;
++    nsresult nsres;
++    HRESULT hres;
++
++    if(V_VT(arg) == VT_DISPATCH && V_DISPATCH(arg)) {
++        IHTMLDOMNode *node_iface;
++        HTMLDOMNode *node;
++
++        hres = IDispatch_QueryInterface(V_DISPATCH(arg), &IID_IHTMLDOMNode, (void**)&node_iface);
++        if(SUCCEEDED(hres)) {
++            node = get_node_obj(node_iface);
++            IHTMLDOMNode_Release(node_iface);
++            if(node) {
++                nsIDOMNode_AddRef(node->nsnode);
++                *ret = node->nsnode;
++                node_release(node);
++                return S_OK;
++            }
++        }
++    }
++
++    switch(V_VT(arg)) {
++    case VT_EMPTY:
++        V_VT(&bstr) = VT_BSTR;
++        V_BSTR(&bstr) = SysAllocString(L"undefined");
++        break;
++    case VT_NULL:
++        V_VT(&bstr) = VT_BSTR;
++        V_BSTR(&bstr) = SysAllocString(L"null");
++        break;
++    case VT_BSTR:
++        V_VT(&bstr) = VT_BSTR;
++        V_BSTR(&bstr) = SysAllocStringLen(V_BSTR(arg), SysStringLen(V_BSTR(arg)));
++        break;
++    default:
++        hres = change_type(&bstr, arg, VT_BSTR, caller);
++        if(FAILED(hres))
++            return hres;
++    }
++    if(!V_BSTR(&bstr))
++        return E_OUTOFMEMORY;
++
++    nsAString_InitDepend(&str, V_BSTR(&bstr));
++    nsres = nsIDOMDocument_CreateTextNode(nsdoc, &str, &nstext);
++    nsAString_Finish(&str);
++    VariantClear(&bstr);
++    if(NS_FAILED(nsres)) {
++        ERR("CreateTextNode failed: %08lx\n", nsres);
++        return map_nsresult(nsres);
++    }
++
++    *ret = (nsIDOMNode*)nstext;
++    return S_OK;
++}
++
++static BOOL is_node_in_list(nsIDOMNode *node, nsIDOMNode **nodes, unsigned count)
++{
++    unsigned i;
++
++    for(i = 0; i < count; i++) {
++        if(nodes[i] == node)
++            return TRUE;
++    }
++    return FALSE;
++}
++
++/* Returns the first sibling of node in the given direction that is not in nodes, or NULL. */
++static nsIDOMNode *get_viable_sibling(nsIDOMNode *node, BOOL next, nsIDOMNode **nodes, unsigned count)
++{
++    nsIDOMNode *sibling = NULL, *tmp;
++
++    if(next)
++        nsIDOMNode_GetNextSibling(node, &sibling);
++    else
++        nsIDOMNode_GetPreviousSibling(node, &sibling);
++
++    while(sibling && is_node_in_list(sibling, nodes, count)) {
++        tmp = sibling;
++        sibling = NULL;
++        if(next)
++            nsIDOMNode_GetNextSibling(tmp, &sibling);
++        else
++            nsIDOMNode_GetPreviousSibling(tmp, &sibling);
++        nsIDOMNode_Release(tmp);
++    }
++
++    return sibling;
++}
++
++/*
++ * Implements ChildNode.before(), after() and replaceWith() as described in the DOM spec.
++ * args are in DISPPARAMS order, that is the last argument comes first.
++ */
++static HRESULT child_node_insert(HTMLDOMNode *This, enum child_node_insert where, VARIANT *args, unsigned argc,
++                                 IServiceProvider *caller)
++{
++    nsIDOMNode *parent = NULL, *sibling = NULL, *node = NULL, *tmp, **nodes = NULL;
++    nsIDOMDocumentFragment *fragment;
++    nsIDOMDocument *nsdoc = NULL;
++    unsigned i, count = 0;
++    nsresult nsres;
++    HRESULT hres = S_OK;
++
++    nsres = nsIDOMNode_GetParentNode(This->nsnode, &parent);
++    if(NS_FAILED(nsres))
++        return map_nsresult(nsres);
++    if(!parent)
++        return S_OK;
++
++    nsres = nsIDOMNode_GetOwnerDocument(This->nsnode, &nsdoc);
++    if(NS_FAILED(nsres) || !nsdoc) {
++        ERR("GetOwnerDocument failed: %08lx\n", nsres);
++        nsIDOMNode_Release(parent);
++        return E_FAIL;
++    }
++
++    if(argc && !(nodes = malloc(argc * sizeof(*nodes)))) {
++        hres = E_OUTOFMEMORY;
++        goto done;
++    }
++    for(count = 0; count < argc; count++) {
++        hres = child_node_arg_to_nsnode(nsdoc, &args[argc - count - 1], caller, &nodes[count]);
++        if(FAILED(hres))
++            goto done;
++    }
++
++    /* for before(), this is the viable previous sibling until the nodes are moved */
++    sibling = get_viable_sibling(This->nsnode, where != CHILD_NODE_BEFORE, nodes, count);
++
++    if(count == 1) {
++        node = nodes[0];
++        nsIDOMNode_AddRef(node);
++    }else {
++        nsres = nsIDOMDocument_CreateDocumentFragment(nsdoc, &fragment);
++        if(NS_FAILED(nsres)) {
++            ERR("CreateDocumentFragment failed: %08lx\n", nsres);
++            hres = map_nsresult(nsres);
++            goto done;
++        }
++        node = (nsIDOMNode*)fragment;
++
++        for(i = 0; i < count; i++) {
++            nsres = nsIDOMNode_AppendChild(node, nodes[i], &tmp);
++            if(NS_FAILED(nsres)) {
++                WARN("AppendChild failed: %08lx\n", nsres);
++                hres = map_nsresult(nsres);
++                goto done;
++            }
++            nsIDOMNode_Release(tmp);
++        }
++    }
++
++    if(where == CHILD_NODE_BEFORE) {
++        tmp = sibling;
++        sibling = NULL;
++        if(tmp) {
++            nsIDOMNode_GetNextSibling(tmp, &sibling);
++            nsIDOMNode_Release(tmp);
++        }else {
++            nsIDOMNode_GetFirstChild(parent, &sibling);
++        }
++    }
++
++    tmp = NULL;
++    if(where == CHILD_NODE_REPLACE_WITH) {
++        nsIDOMNode *cur_parent = NULL;
++
++        nsIDOMNode_GetParentNode(This->nsnode, &cur_parent);
++        if(cur_parent == parent)
++            nsres = nsIDOMNode_ReplaceChild(parent, node, This->nsnode, &tmp);
++        else
++            nsres = nsIDOMNode_InsertBefore(parent, node, sibling, &tmp);
++        if(cur_parent)
++            nsIDOMNode_Release(cur_parent);
++    }else {
++        nsres = nsIDOMNode_InsertBefore(parent, node, sibling, &tmp);
++    }
++    if(NS_FAILED(nsres)) {
++        WARN("insert failed: %08lx\n", nsres);
++        hres = map_nsresult(nsres);
++    }else if(tmp) {
++        nsIDOMNode_Release(tmp);
++    }
++
++done:
++    for(i = 0; i < count; i++)
++        nsIDOMNode_Release(nodes[i]);
++    free(nodes);
++    if(node)
++        nsIDOMNode_Release(node);
++    if(sibling)
++        nsIDOMNode_Release(sibling);
++    nsIDOMDocument_Release(nsdoc);
++    nsIDOMNode_Release(parent);
++    return hres;
++}
++
++static inline HTMLDOMNode *impl_from_IWineHTMLChildNode(IWineHTMLChildNode *iface)
++{
++    return CONTAINING_RECORD(iface, HTMLDOMNode, IWineHTMLChildNode_iface);
++}
++
++DISPEX_IDISPATCH_IMPL(ChildNode, IWineHTMLChildNode, impl_from_IWineHTMLChildNode(iface)->event_target.dispex)
++
++static HRESULT WINAPI ChildNode_remove(IWineHTMLChildNode *iface)
++{
++    HTMLDOMNode *This = impl_from_IWineHTMLChildNode(iface);
++    nsIDOMNode *parent, *removed;
++    nsresult nsres;
++
++    TRACE("(%p)\n", This);
++
++    nsres = nsIDOMNode_GetParentNode(This->nsnode, &parent);
++    if(NS_FAILED(nsres))
++        return map_nsresult(nsres);
++    if(!parent)
++        return S_OK;
++
++    nsres = nsIDOMNode_RemoveChild(parent, This->nsnode, &removed);
++    nsIDOMNode_Release(parent);
++    if(NS_FAILED(nsres)) {
++        ERR("RemoveChild failed: %08lx\n", nsres);
++        return map_nsresult(nsres);
++    }
++
++    nsIDOMNode_Release(removed);
++    return S_OK;
++}
++
++static HRESULT WINAPI ChildNode_replaceWith(IWineHTMLChildNode *iface, VARIANT node)
++{
++    HTMLDOMNode *This = impl_from_IWineHTMLChildNode(iface);
++
++    TRACE("(%p)->(%s)\n", This, debugstr_variant(&node));
++
++    return child_node_insert(This, CHILD_NODE_REPLACE_WITH, &node, 1, NULL);
++}
++
++static HRESULT WINAPI ChildNode_before(IWineHTMLChildNode *iface, VARIANT node)
++{
++    HTMLDOMNode *This = impl_from_IWineHTMLChildNode(iface);
++
++    TRACE("(%p)->(%s)\n", This, debugstr_variant(&node));
++
++    return child_node_insert(This, CHILD_NODE_BEFORE, &node, 1, NULL);
++}
++
++static HRESULT WINAPI ChildNode_after(IWineHTMLChildNode *iface, VARIANT node)
++{
++    HTMLDOMNode *This = impl_from_IWineHTMLChildNode(iface);
++
++    TRACE("(%p)->(%s)\n", This, debugstr_variant(&node));
++
++    return child_node_insert(This, CHILD_NODE_AFTER, &node, 1, NULL);
++}
++
++static const IWineHTMLChildNodeVtbl ChildNodeVtbl = {
++    ChildNode_QueryInterface,
++    ChildNode_AddRef,
++    ChildNode_Release,
++    ChildNode_GetTypeInfoCount,
++    ChildNode_GetTypeInfo,
++    ChildNode_GetIDsOfNames,
++    ChildNode_Invoke,
++    ChildNode_remove,
++    ChildNode_replaceWith,
++    ChildNode_before,
++    ChildNode_after,
++};
++
++/* The methods take any number of arguments, which the IDL can't express. */
++static HRESULT child_node_hook(DispatchEx *dispex, enum child_node_insert where, WORD flags, DISPPARAMS *dp,
++                               VARIANT *res, IServiceProvider *caller)
++{
++    HTMLDOMNode *This = CONTAINING_RECORD(dispex, HTMLDOMNode, event_target.dispex);
++
++    if(!(flags & DISPATCH_METHOD) || dp->cNamedArgs)
++        return S_FALSE;
++
++    TRACE("(%p)->(%u args)\n", This, dp->cArgs);
++
++    if(res)
++        V_VT(res) = VT_EMPTY;
++    return child_node_insert(This, where, dp->rgvarg, dp->cArgs, caller);
++}
++
++static HRESULT ChildNode_replaceWith_hook(DispatchEx *dispex, WORD flags, DISPPARAMS *dp, VARIANT *res,
++                                          EXCEPINFO *ei, IServiceProvider *caller)
++{
++    return child_node_hook(dispex, CHILD_NODE_REPLACE_WITH, flags, dp, res, caller);
++}
++
++static HRESULT ChildNode_before_hook(DispatchEx *dispex, WORD flags, DISPPARAMS *dp, VARIANT *res,
++                                     EXCEPINFO *ei, IServiceProvider *caller)
++{
++    return child_node_hook(dispex, CHILD_NODE_BEFORE, flags, dp, res, caller);
++}
++
++static HRESULT ChildNode_after_hook(DispatchEx *dispex, WORD flags, DISPPARAMS *dp, VARIANT *res,
++                                    EXCEPINFO *ei, IServiceProvider *caller)
++{
++    return child_node_hook(dispex, CHILD_NODE_AFTER, flags, dp, res, caller);
++}
++
++/* ChildNode members of Element, CharacterData and DocumentType. */
++void ChildNode_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
++{
++    static const dispex_hook_t child_node_hooks[] = {
++        {DISPID_IWINEHTMLCHILDNODE_REPLACEWITH, ChildNode_replaceWith_hook},
++        {DISPID_IWINEHTMLCHILDNODE_BEFORE,      ChildNode_before_hook},
++        {DISPID_IWINEHTMLCHILDNODE_AFTER,       ChildNode_after_hook},
++        {DISPID_UNKNOWN}
++    };
++
++    if(mode >= COMPAT_MODE_IE9)
++        dispex_info_add_interface(info, IWineHTMLChildNode_tid, child_node_hooks);
++}
++
+ static inline HTMLDOMNode *HTMLDOMNode_from_DispatchEx(DispatchEx *iface)
+ {
+     return CONTAINING_RECORD(iface, HTMLDOMNode, event_target.dispex);
+@@ -1129,6 +1460,8 @@ void *HTMLDOMNode_query_interface(DispatchEx *dispex, REFIID riid)
+         return &This->IHTMLDOMNode3_iface;
+     if(IsEqualGUID(&IID_IWineHTMLDOMNodePrivate, riid))
+         return &This->IWineHTMLDOMNodePrivate_iface;
++    if(IsEqualGUID(&IID_IWineHTMLChildNode, riid))
++        return &This->IWineHTMLChildNode_iface;
+ 
+     return EventTarget_query_interface(&This->event_target, riid);
+ }
+@@ -1227,6 +1560,7 @@ void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsno
+     node->IHTMLDOMNode2_iface.lpVtbl = &HTMLDOMNode2Vtbl;
+     node->IHTMLDOMNode3_iface.lpVtbl = &HTMLDOMNode3Vtbl;
+     node->IWineHTMLDOMNodePrivate_iface.lpVtbl = &HTMLDOMNode_private_vtbl;
++    node->IWineHTMLChildNode_iface.lpVtbl = &ChildNodeVtbl;
+ 
+     init_event_target(&node->event_target, dispex_data, doc->script_global);
+ 
+diff --git a/dlls/mshtml/htmltextnode.c b/dlls/mshtml/htmltextnode.c
+index 0e411a7..1e35452 100644
+--- a/dlls/mshtml/htmltextnode.c
++++ b/dlls/mshtml/htmltextnode.c
+@@ -221,6 +221,7 @@ static const IWineHTMLCharacterDataVtbl CharacterDataVtbl = {
+ static void CharacterData_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+ {
+     dispex_info_add_interface(info, IWineHTMLCharacterData_tid, NULL);
++    ChildNode_init_dispex_info(info, mode);
+ }
+ 
+ dispex_static_data_t CharacterData_dispex = {
+diff --git a/dlls/mshtml/mshtml_private.h b/dlls/mshtml/mshtml_private.h
+index cd47eb5..8881a76 100644
+--- a/dlls/mshtml/mshtml_private.h
++++ b/dlls/mshtml/mshtml_private.h
+@@ -311,6 +311,7 @@ struct constructor;
+ #define PRIVATE_TID_LIST \
+     XIID(IWineDOMTokenList) \
+     XIID(IWineHTMLCharacterData) \
++    XIID(IWineHTMLChildNode) \
+     XIID(IWineHTMLDOMNodePrivate) \
+     XIID(IWineHTMLElementPrivate) \
+     XIID(IWineHTMLInputPrivate) \
+@@ -1058,6 +1059,7 @@ struct HTMLDOMNode {
+     IHTMLDOMNode2 IHTMLDOMNode2_iface;
+     IHTMLDOMNode3 IHTMLDOMNode3_iface;
+     IWineHTMLDOMNodePrivate IWineHTMLDOMNodePrivate_iface;
++    IWineHTMLChildNode IWineHTMLChildNode_iface;
+     const NodeImplVtbl *vtbl;
+ 
+     nsIDOMNode *nsnode;
+@@ -1437,6 +1439,7 @@ void HTMLDOMNode_destructor(DispatchEx*);
+ void HTMLDOMNode_traverse(DispatchEx*,nsCycleCollectionTraversalCallback*);
+ void HTMLDOMNode_unlink(DispatchEx*);
+ void HTMLDOMNode_init_dispex_info(dispex_data_t*,compat_mode_t);
++void ChildNode_init_dispex_info(dispex_data_t*,compat_mode_t);
+ 
+ void *HTMLElement_query_interface(DispatchEx*,REFIID);
+ void HTMLElement_destructor(DispatchEx*);
+diff --git a/dlls/mshtml/mshtml_private_iface.idl b/dlls/mshtml/mshtml_private_iface.idl
+index d66b4b0..51634d7 100644
+--- a/dlls/mshtml/mshtml_private_iface.idl
++++ b/dlls/mshtml/mshtml_private_iface.idl
+@@ -225,6 +225,29 @@ interface IWineHTMLDOMNodePrivate : IDispatch
+     HRESULT normalize();
+ }
+ 
++const long DISPID_IWINEHTMLCHILDNODE_REMOVE      = 39;
++const long DISPID_IWINEHTMLCHILDNODE_REPLACEWITH = 40;
++const long DISPID_IWINEHTMLCHILDNODE_BEFORE      = 41;
++const long DISPID_IWINEHTMLCHILDNODE_AFTER       = 42;
++[
++    odl,
++    oleautomation,
++    dual,
++    hidden,
++    uuid(d6923a3f-a3a1-457a-95e8-8d048e8536c4)
++]
++interface IWineHTMLChildNode : IDispatch
++{
++    [id(DISPID_IWINEHTMLCHILDNODE_REMOVE)]
++    HRESULT remove();
++    [id(DISPID_IWINEHTMLCHILDNODE_REPLACEWITH)]
++    HRESULT replaceWith([in] VARIANT node);
++    [id(DISPID_IWINEHTMLCHILDNODE_BEFORE)]
++    HRESULT before([in] VARIANT node);
++    [id(DISPID_IWINEHTMLCHILDNODE_AFTER)]
++    HRESULT after([in] VARIANT node);
++}
++
+ [
+     odl,
+     oleautomation,
+diff --git a/dlls/mshtml/tests/documentmode.js b/dlls/mshtml/tests/documentmode.js
+index 9d4985f..61023fa 100644
+--- a/dlls/mshtml/tests/documentmode.js
++++ b/dlls/mshtml/tests/documentmode.js
+@@ -4348,7 +4348,9 @@ sync_test("prototype props", function() {
+     }
+ 
+     check(Attr, [ "expando", "name", "ownerElement", "specified", "value" ]);
+-    check(CharacterData, [ "appendData", "data", "deleteData", "insertData", "length", "replaceData", "substringData" ]);
++    /* ChildNode methods are not in native IE, but Wine exposes them for modern pages */
++    var child_node = [ "after", "before", "remove", "replaceWith" ];
++    check(CharacterData, [ "appendData", "data", "deleteData", "insertData", "length", "replaceData", "substringData" ], null, child_node);
+     check(Comment, [ "text" ]);
+     if(v >= 11)
+         check(Crypto, [ "getRandomValues", "subtle" ]);
+@@ -4451,7 +4453,7 @@ sync_test("prototype props", function() {
+         ["releaseEvents",11], "rootElement", ["visibilityState",10]
+     ]);
+     check(DocumentFragment, [ ["attachEvent",9,10], ["detachEvent",9,10], "querySelector", "querySelectorAll", "removeNode", "replaceNode", "swapNode" ]);
+-    check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
++    check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ], null, child_node);
+     check(DOMParser, [ "parseFromString" ]);
+     check(Element, [
+         "childElementCount", "clientHeight", "clientLeft", "clientTop", "clientWidth", ["fireEvent",9,10], "firstElementChild",
+@@ -4474,7 +4476,7 @@ sync_test("prototype props", function() {
+         ["onmspointerenter",11], ["onmspointerleave",11], ["onpointercancel",11], ["onpointerdown",11], ["onpointerenter",11],
+         ["onpointerleave",11], ["onpointermove",11], ["onpointerout",11], ["onpointerover",11], ["onpointerup",11],
+         ["releasePointerCapture",11], ["setPointerCapture",11]
+-    ]);
++    ], child_node);
+     check(Event, [
+         "AT_TARGET", "BUBBLING_PHASE", "CAPTURING_PHASE", "bubbles", "cancelBubble", "cancelable", "currentTarget",
+         "defaultPrevented", "eventPhase", "initEvent", "isTrusted", "preventDefault", "srcElement",
+diff --git a/dlls/mshtml/tests/dom.js b/dlls/mshtml/tests/dom.js
+index 8502db6..fb0bb8b 100644
+--- a/dlls/mshtml/tests/dom.js
++++ b/dlls/mshtml/tests/dom.js
+@@ -1194,3 +1194,90 @@ sync_test("XMLSerializer", function() {
+     result = serializer.serializeToString(document.createTextNode("plain text"));
+     ok(result === "plain text", "serialized text node missing content: " + result);
+ });
++
++sync_test("ChildNode", function() {
++    var div = document.createElement("div"), a, b, c, t, r;
++
++    if(!("replaceWith" in Element.prototype)) {
++        win_skip("ChildNode methods not supported");
++        return;
++    }
++
++    function children_str(node) {
++        var ret = [], n;
++        for(n = node.firstChild; n; n = n.nextSibling)
++            ret.push(n.nodeType === 3 ? "#" + n.data : n.id);
++        return ret.join();
++    }
++
++    ok(Element.prototype.hasOwnProperty("remove"), "remove not an own prop of Element.prototype");
++    ok(Element.prototype.hasOwnProperty("replaceWith"), "replaceWith not an own prop of Element.prototype");
++    ok(Element.prototype.hasOwnProperty("before"), "before not an own prop of Element.prototype");
++    ok(Element.prototype.hasOwnProperty("after"), "after not an own prop of Element.prototype");
++    ok(CharacterData.prototype.hasOwnProperty("remove"), "remove not an own prop of CharacterData.prototype");
++    ok(DocumentType.prototype.hasOwnProperty("after"), "after not an own prop of DocumentType.prototype");
++    ok(!Node.prototype.hasOwnProperty("remove"), "remove is an own prop of Node.prototype");
++    ok(!("before" in document), "before in document");
++    ok(!("after" in document.createDocumentFragment()), "after in document fragment");
++
++    a = document.createElement("span"); a.id = "a";
++    b = document.createElement("span"); b.id = "b";
++    c = document.createElement("span"); c.id = "c";
++    div.appendChild(a);
++    div.appendChild(b);
++
++    r = a.replaceWith(c);
++    ok(r === undefined, "replaceWith returned " + r);
++    ok(children_str(div) === "c,b", "after replaceWith(c) children = " + children_str(div));
++    ok(a.parentNode === null, "a.parentNode = " + a.parentNode);
++
++    c.replaceWith("x", a, "y");
++    ok(children_str(div) === "#x,a,#y,b", "after replaceWith(x, a, y) children = " + children_str(div));
++    ok(c.parentNode === null, "c.parentNode = " + c.parentNode);
++
++    /* replacing a node with itself and its next sibling */
++    a.replaceWith(a, b);
++    ok(children_str(div) === "#x,a,b,#y", "after replaceWith(a, b) children = " + children_str(div));
++
++    b.before(c);
++    ok(children_str(div) === "#x,a,c,b,#y", "after before(c) children = " + children_str(div));
++    b.before(b, "z");
++    ok(children_str(div) === "#x,a,c,b,#z,#y", "after before(b, z) children = " + children_str(div));
++    a.before(c, a);
++    ok(children_str(div) === "#x,c,a,b,#z,#y", "after before(c, a) children = " + children_str(div));
++
++    a.after(1, null);
++    ok(children_str(div) === "#x,c,a,#1,#null,b,#z,#y", "after after(1, null) children = " + children_str(div));
++    c.after(b, c);
++    ok(children_str(div) === "#x,b,c,a,#1,#null,#z,#y", "after after(b, c) children = " + children_str(div));
++
++    t = div.firstChild;
++    t.after("w");
++    ok(children_str(div) === "#x,#w,b,c,a,#1,#null,#z,#y", "after text after(w) children = " + children_str(div));
++    t.replaceWith();
++    ok(children_str(div) === "#w,b,c,a,#1,#null,#z,#y", "after text replaceWith() children = " + children_str(div));
++
++    r = a.remove();
++    ok(r === undefined, "remove returned " + r);
++    ok(a.parentNode === null, "a.parentNode after remove = " + a.parentNode);
++    ok(children_str(div) === "#w,b,c,#1,#null,#z,#y", "after remove children = " + children_str(div));
++    div.firstChild.remove();
++    ok(children_str(div) === "b,c,#1,#null,#z,#y", "after text remove children = " + children_str(div));
++
++    /* no parent: nothing happens */
++    a.remove();
++    a.before("x");
++    a.after(b);
++    a.replaceWith(c);
++    ok(a.parentNode === null, "a.parentNode = " + a.parentNode);
++    ok(children_str(div) === "b,c,#1,#null,#z,#y", "after no-parent calls children = " + children_str(div));
++
++    /* select.remove(index) still removes options */
++    var select = document.createElement("select");
++    select.appendChild(document.createElement("option"));
++    select.appendChild(document.createElement("option"));
++    div.appendChild(select);
++    select.remove(0);
++    ok(select.options.length === 1, "select.options.length = " + select.options.length);
++    ok(select.parentNode === div, "select removed from its parent");
++});

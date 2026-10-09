@@ -129,8 +129,10 @@ Download the Creative Cloud installer from Adobe
 adobewine run ~/Downloads/Creative_Cloud_Set-Up.exe
 ```
 
-If the installer window itself stays white, use Adobe's Creative Cloud offline installer
-instead (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#installation-and-sign-in)).
+For the web installer 2.14.0.82, which otherwise shows a white window (issue #2),
+`adobewine run` adds a small fix to the installer's page while it runs; this needs
+`inotify-tools` installed. If the installer window still stays white, use Adobe's
+Creative Cloud offline installer instead (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#installation-and-sign-in)).
 
 Sign in with your Adobe account when the installer asks. If the sign-in window stays
 blank or white, close it and run:

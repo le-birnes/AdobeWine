@@ -1,0 +1,118 @@
+mshtml: Implement HTMLInputElement indeterminate property.
+Found by NickPittas in AdobeWine issue #2.
+
+diff --git a/dlls/mshtml/htmlinput.c b/dlls/mshtml/htmlinput.c
+index 124aa70..4414696 100644
+--- a/dlls/mshtml/htmlinput.c
++++ b/dlls/mshtml/htmlinput.c
+@@ -402,15 +402,35 @@ static HRESULT WINAPI HTMLInputElement_createTextRange(IHTMLInputElement *iface,
+ static HRESULT WINAPI HTMLInputElement_put_indeterminate(IHTMLInputElement *iface, VARIANT_BOOL v)
+ {
+     HTMLInputElement *This = impl_from_IHTMLInputElement(iface);
+-    FIXME("(%p)->(%x)\n", This, v);
+-    return E_NOTIMPL;
++    nsresult nsres;
++
++    TRACE("(%p)->(%x)\n", This, v);
++
++    nsres = nsIDOMHTMLInputElement_SetIndeterminate(This->nsinput, v != VARIANT_FALSE);
++    if(NS_FAILED(nsres)) {
++        ERR("SetIndeterminate failed: %08lx\n", nsres);
++        return E_FAIL;
++    }
++
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI HTMLInputElement_get_indeterminate(IHTMLInputElement *iface, VARIANT_BOOL *p)
+ {
+     HTMLInputElement *This = impl_from_IHTMLInputElement(iface);
+-    FIXME("(%p)->(%p)\n", This, p);
+-    return E_NOTIMPL;
++    cpp_bool indeterminate;
++    nsresult nsres;
++
++    TRACE("(%p)->(%p)\n", This, p);
++
++    nsres = nsIDOMHTMLInputElement_GetIndeterminate(This->nsinput, &indeterminate);
++    if(NS_FAILED(nsres)) {
++        ERR("GetIndeterminate failed: %08lx\n", nsres);
++        return E_FAIL;
++    }
++
++    *p = variant_bool(indeterminate);
++    return S_OK;
+ }
+ 
+ static HRESULT WINAPI HTMLInputElement_put_defaultChecked(IHTMLInputElement *iface, VARIANT_BOOL v)
+diff --git a/dlls/mshtml/tests/dom.c b/dlls/mshtml/tests/dom.c
+index bfaad84..ddf11fe 100644
+--- a/dlls/mshtml/tests/dom.c
++++ b/dlls/mshtml/tests/dom.c
+@@ -4691,6 +4691,28 @@ static void _test_input_set_checked(unsigned line, IHTMLInputElement *input, VAR
+     _test_input_get_checked(line, input, b);
+ }
+ 
++#define test_input_get_indeterminate(i,b) _test_input_get_indeterminate(__LINE__,i,b)
++static void _test_input_get_indeterminate(unsigned line, IHTMLInputElement *input, VARIANT_BOOL exb)
++{
++    VARIANT_BOOL indeterminate = 100;
++    HRESULT hres;
++
++    hres = IHTMLInputElement_get_indeterminate(input, &indeterminate);
++    ok_(__FILE__,line) (hres == S_OK, "get_indeterminate failed: %08lx\n", hres);
++    ok_(__FILE__,line) (indeterminate == exb, "indeterminate=%x, expected %x\n", indeterminate, exb);
++}
++
++#define test_input_set_indeterminate(i,b) _test_input_set_indeterminate(__LINE__,i,b)
++static void _test_input_set_indeterminate(unsigned line, IHTMLInputElement *input, VARIANT_BOOL b)
++{
++    HRESULT hres;
++
++    hres = IHTMLInputElement_put_indeterminate(input, b);
++    ok_(__FILE__,line) (hres == S_OK, "put_indeterminate failed: %08lx\n", hres);
++
++    _test_input_get_indeterminate(line, input, b);
++}
++
+ #define test_input_maxlength(i,b) _test_input_maxlength(__LINE__,i,b)
+ static void _test_input_maxlength(unsigned line, IHTMLInputElement *input, LONG exl)
+ {
+@@ -10410,6 +10432,11 @@ static void test_elems(IHTMLDocument2 *doc)
+         test_input_set_checked(input, VARIANT_TRUE);
+         test_input_set_checked(input, VARIANT_FALSE);
+ 
++        test_input_get_indeterminate(input, VARIANT_FALSE);
++        test_input_set_indeterminate(input, VARIANT_TRUE);
++        test_input_get_checked(input, VARIANT_FALSE);
++        test_input_set_indeterminate(input, VARIANT_FALSE);
++
+         test_input_maxlength(input, 0x7fffffff);
+         test_input_set_maxlength(input, 30);
+ 
+diff --git a/dlls/mshtml/tests/dom.js b/dlls/mshtml/tests/dom.js
+index fb0bb8b..9e5f4e6 100644
+--- a/dlls/mshtml/tests/dom.js
++++ b/dlls/mshtml/tests/dom.js
+@@ -1281,3 +1281,21 @@ sync_test("ChildNode", function() {
+     ok(select.options.length === 1, "select.options.length = " + select.options.length);
+     ok(select.parentNode === div, "select removed from its parent");
+ });
++
++sync_test("input indeterminate", function() {
++    var input = document.createElement("input");
++
++    input.type = "checkbox";
++    ok(input.indeterminate === false, "indeterminate = " + input.indeterminate);
++    input.indeterminate = true;
++    ok(input.indeterminate === true, "indeterminate = " + input.indeterminate);
++    ok(input.checked === false, "checked = " + input.checked);
++    input.checked = true;
++    ok(input.indeterminate === true, "indeterminate after checked = " + input.indeterminate);
++    input.indeterminate = false;
++    ok(input.indeterminate === false, "indeterminate = " + input.indeterminate);
++    ok(input.checked === true, "checked = " + input.checked);
++    input.indeterminate = 1;
++    ok(input.indeterminate === true, "indeterminate = " + input.indeterminate);
++    ok(!input.hasAttribute("indeterminate"), "indeterminate attribute set");
++});
