@@ -59,7 +59,8 @@ Results from other people's machines. Thank you! Add yours with a
 
 | Report | Distribution | Hardware | Desktop | Apps | Result |
 |---|---|---|---|---|---|
-| [#2](../../../issues/2) | Linux Mint 22.3 (kernel 7.0, built from source) | i7-12700H, 16 GB, Iris Xe + RTX 4060 Laptop, NVIDIA 595.91 | Cinnamon 6.6, X11 | Illustrator 2026 | works well. The Creative Cloud web installer showed a white window (the offline installer worked); high memory use with 16 GB RAM, one freeze (being investigated) |
+| [#2](../../../issues/2) | Linux Mint 22.3 (kernel 7.0, built from source) | i7-12700H, 16 GB, Iris Xe + RTX 4060 Laptop, NVIDIA 595.91 | Cinnamon 6.6, X11 | Illustrator 2026 | works well. The Creative Cloud web installer showed a white window (the offline installer worked); high memory use with 16 GB RAM and no swap, one freeze (being investigated); Creative Cloud's close button does not quit it (File > Exit does) |
+| [#2](../../../issues/2#issuecomment-6056733418) (NickPittas) | Arch-based (Omarchy), kernel 7.2.5 | RTX 4090, NVIDIA 610.57.04 | Wayland | Creative Cloud web installer 2.14.0.82 | white window; NickPittas traced it to three missing browser features in Wine (fix in progress: patches 0055-0057; until then the launcher works around it) |
 
 ## Tested in containers
 
