@@ -61,4 +61,4 @@ to WineHQ; help with that is very welcome.
 | 0051 | dcomp | Minimal device target and visual for swapchain content | AdobeWine |
 | 0052 | dwrite | Last resort font uses the system collection for ranges without one | AdobeWine |
 | 0053 | win32u, winex11.drv | Recreated swapchains get the window size not the old offscreen size | AdobeWine |
-| 0054 | win32u | Implement DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL | AdobeWine |
+| 0058 | win32u | Implement DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL | switch87 |
