@@ -11,6 +11,8 @@
 - `adobewine <app>` and the menu entries start the newest installed release (e.g. Photoshop
   2025), and menu entries get the app icons again (switch87, #5).
 - Gentoo install guide for the `::snakebyte` overlay (switch87, #7).
+- Patch 0043 fixed: a program that added a font itself and then listed fonts could lose a font
+  family or hang (found by Wine's own gdi32 tests).
 - Creative Cloud web installer 2.14.0.82: blank white window diagnosed by NickPittas (#2);
   fix in progress.
 

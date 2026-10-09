@@ -7,9 +7,13 @@ now checks the cache key write time and loads families written since the last lo
 skipping faces it already has; add_face_to_cache() touches the cache key so a face
 added to an existing family is noticed. Removal by another process is not tracked.
 Test: wine/tests/font/fontlive.c.
+A family already known to this process (it added the face itself, or the family existed) is
+reused on a refresh: creating a second family of the same name left it out of the name tree,
+and releasing it removed the existing family's entry, corrupting the tree (Wine's gdi32
+font.c test_font_weight: "font not found", then a hang).
 
 diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
-index b4ed50d..2634900 100644
+index b4ed50d..2416de8 100644
 --- a/dlls/win32u/font.c
 +++ b/dlls/win32u/font.c
 @@ -1280,7 +1280,7 @@ struct cached_face
@@ -56,9 +60,16 @@ index b4ed50d..2634900 100644
          if (!(hkey_family = reg_open_key( wine_fonts_cache_key, enum_info->Name,
                                            enum_info->NameLength )))
              continue;
-@@ -1359,13 +1364,41 @@ static void load_font_list_from_cache(void)
+@@ -1357,15 +1362,47 @@ static void load_font_list_from_cache(void)
+         if (!query_reg_value( hkey_family, NULL, info, sizeof(buffer) ))
+             second_name[0] = 0;
  
-         family = create_family( family_name, second_name );
+-        family = create_family( family_name, second_name );
++        /* On a refresh the family may already exist (this process added the face itself):
++         * a second family of that name would not enter the name tree, and releasing it
++         * would remove the existing family's tree entry. */
++        if (newer_than && (family = find_family_from_name( family_name ))) family->refcount++;
++        else family = create_family( family_name, second_name );
  
 -        load_face_from_cache( hkey_family, family, buffer, sizeof(buffer), TRUE );
 +        load_face_from_cache( hkey_family, family, buffer, sizeof(buffer), TRUE, newer_than != NULL );
@@ -99,7 +110,7 @@ index b4ed50d..2634900 100644
  static void add_face_to_cache( struct gdi_font_face *face )
  {
      HKEY hkey_family, hkey_face;
-@@ -1411,6 +1444,10 @@ static void add_face_to_cache( struct gdi_font_face *face )
+@@ -1411,6 +1448,10 @@ static void add_face_to_cache( struct gdi_font_face *face )
  
      if (hkey_face != hkey_family) NtClose( hkey_face );
      NtClose( hkey_family );
@@ -110,7 +121,7 @@ index b4ed50d..2634900 100644
  }
  
  static void remove_face_from_cache( struct gdi_font_face *face )
-@@ -3459,6 +3496,7 @@ static BOOL font_EnumFonts( PHYSDEV dev, LOGFONTW *lf, font_enum_proc proc, LPAR
+@@ -3459,6 +3500,7 @@ static BOOL font_EnumFonts( PHYSDEV dev, LOGFONTW *lf, font_enum_proc proc, LPAR
      count = create_enum_charset_list( charset, enum_charsets );
  
      pthread_mutex_lock( &font_lock );
@@ -118,7 +129,7 @@ index b4ed50d..2634900 100644
  
      if (lf && lf->lfFaceName[0])
      {
-@@ -6782,8 +6820,9 @@ UINT font_init(void)
+@@ -6782,8 +6824,9 @@ UINT font_init(void)
      if (disposition != REG_CREATED_NEW_KEY)
      {
          load_registry_fonts();
