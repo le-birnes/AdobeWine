@@ -1,0 +1,97 @@
+winex11: Align foreign (CEP) client surfaces to the toplevel's live X origin.
+
+Ported from NickPittas' AE4Linux (LGPL-2.1+, permission in AdobeWine issue #2):
+patches/wine/winex11/cep-v71-to-v87.patch ("accepted geometry result": CEP placement and input
+alignment correct in After Effects). That file is an incremental v71->v87 diff on top of local
+Wine 11.12 changes that were never published, so it does not apply to 11.18; this is the
+reconstructed complete change. The helper is his: for a client surface whose window belongs to
+another process (no local window data, e.g. a CEP/Chromium child window rendered from its GPU
+process inside the After Effects main window), compute the surface origin from the window's
+client position relative to the toplevel and the toplevel's real X position
+(XTranslateCoordinates of its whole window), instead of trusting the cached rects. Local
+windows, toplevels and failed X queries keep the old rect, so nothing changes for them.
+Adapted to 11.18: his v71 base reparented foreign surfaces onscreen; 11.18 composites every
+child surface offscreen, so the corrected origin is also used for the destination of the
+offscreen present (copy into the toplevel's whole window), plus, as in his patch, for the
+position of an onscreen client window. His later v90 per-surface transform cache is not in
+AE4Linux and is not included (one XTranslateCoordinates round trip per foreign present).
+
+diff --git a/dlls/winex11.drv/init.c b/dlls/winex11.drv/init.c
+index b9f89d4..d3220aa 100644
+--- a/dlls/winex11.drv/init.c
++++ b/dlls/winex11.drv/init.c
+@@ -287,12 +287,66 @@ static void x11drv_client_surface_detach( struct client_surface *client )
+     }
+ }
+ 
++static int foreign_origin_error( Display *display, XErrorEvent *event, void *arg )
++{
++    return event->error_code == BadWindow;
++}
++
++/* A client surface created for a window of another process (for instance a CEP/Chromium child
++ * window rendered from its GPU process inside the After Effects main window) has no local window
++ * data, and its rects are computed from the window manager's idea of the toplevel position. Place
++ * it from the live X geometry of the toplevel's whole window instead, so that the surface lines up
++ * with the window's client area and with mouse input. Returns the rect unchanged for local windows,
++ * toplevels, or when anything cannot be queried. The rect must be in raw (monitor DPI) pixels. */
++static RECT client_surface_get_rect( HWND hwnd, struct x11drv_client_surface *surface, RECT rect )
++{
++    HWND toplevel = surface->client.toplevel;
++    struct x11drv_win_data *data;
++    POINT origin = {0}, target_origin, toplevel_client = {0};
++    Window target, child;
++    BOOL translated, failed;
++    int root_x, root_y;
++    UINT dpi;
++
++    if (!hwnd || !toplevel || hwnd == toplevel) return rect;
++    if ((data = get_win_data( hwnd )))
++    {
++        release_win_data( data );
++        return rect;
++    }
++    if (!(dpi = NtUserGetWinMonitorDpi( hwnd, MDT_RAW_DPI ))) return rect;
++    if (!(target = X11DRV_get_whole_window( toplevel ))) return rect;
++
++    RtlSetLastWin32Error( ERROR_SUCCESS );
++    if (!NtUserMapWindowPoints( hwnd, toplevel, &origin, 1, dpi ) &&
++        RtlGetLastWin32Error() != ERROR_SUCCESS) return rect;
++    NtUserMapWindowPoints( toplevel, 0, &toplevel_client, 1, dpi );
++
++    X11DRV_expect_error( gdi_display, foreign_origin_error, NULL );
++    translated = XTranslateCoordinates( gdi_display, target, DefaultRootWindow( gdi_display ),
++                                        0, 0, &root_x, &root_y, &child );
++    failed = X11DRV_check_error();
++    if (!translated || failed) return rect;
++    target_origin = root_to_virtual_screen( root_x, root_y );
++    origin.x += toplevel_client.x - target_origin.x;
++    origin.y += toplevel_client.y - target_origin.y;
++
++    if (origin.x != rect.left || origin.y != rect.top)
++        TRACE( "foreign client surface %p in %p/%lx: %s moved to %d,%d\n", hwnd, toplevel, target,
++               wine_dbgstr_rect( &rect ), (int)origin.x, (int)origin.y );
++    OffsetRect( &rect, origin.x - rect.left, origin.y - rect.top );
++    return rect;
++}
++
+ static void client_surface_update_geometry( HWND hwnd, struct x11drv_client_surface *surface )
+ {
+     RECT rect = surface->client.raw ? surface->client.monitor_rect : surface->client.virtual_rect;
+     XWindowChanges changes = surface->changes;
+     int mask = 0;
+ 
++    /* an onscreen client window is not DPI scaled, so both rects are in raw pixels here */
++    if (!surface->client.offscreen) rect = client_surface_get_rect( hwnd, surface, rect );
++
+     /* offscreen windows keep the swapchain size, the copy to the toplevel stretches it */
+     if (surface->client.offscreen && surface->client.buffer_size.cx && surface->client.buffer_size.cy)
+     {
+@@ -401,6 +455,7 @@ static void X11DRV_client_surface_present( struct client_surface *client, HDC hd
+     if (hwnd == toplevel && NtUserGetPresentRect( toplevel, &rect, -1 /* raw dpi */ )) region = 0;
+     else region = get_dc_monitor_region( hwnd, hdc );
+ 
++    rect_dst = client_surface_get_rect( hwnd, surface, rect_dst );
+     rect_src = surface->client.raw ? surface->client.monitor_rect : surface->client.virtual_rect;
+     if (surface->client.buffer_size.cx && surface->client.buffer_size.cy)
+     {
