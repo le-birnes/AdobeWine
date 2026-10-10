@@ -80,6 +80,9 @@ rest were written for this project, and we would like to see them upstream in Wi
 
 ## Help wanted
 
+Where this is going and what's next: [docs/ROADMAP.md](docs/ROADMAP.md)
+([comments welcome](../../discussions/9)).
+
 - **Test it** on your distribution and GPU, and tell us in a
   [compatibility report](../../issues/new?template=compatibility.yml).
 - **Report bugs** with a log: `adobewine` prints where it saved each run's log.
