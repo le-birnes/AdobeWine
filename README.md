@@ -42,7 +42,7 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   did not exit and ends it, instead of silently opening nothing. Full list: [CHANGELOG.md](CHANGELOG.md).
 
 ### Known gaps
-- After Effects cannot render (Render Queue hang) and does not relink moved footage by relative path.
+- After Effects cannot render yet (adding to the Render Queue hangs).
 - Premiere's Import and Export modes draw black (Edit mode, Home and Learn work); export through Media Encoder meanwhile.
 - Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
