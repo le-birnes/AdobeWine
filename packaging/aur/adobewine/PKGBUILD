@@ -30,7 +30,7 @@ optdepends=(
 )
 source=("adobewine-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
         "https://dl.winehq.org/wine/source/11.x/wine-${_winever}.tar.xz")
-sha256sums=('d27d1cbc743183297753eb7def0ef638394a758ea46db6de2e2764def5ee53da'
+sha256sums=('b49c96b733993ee2e061fe5311ae77646f9b8dec6b05db11c64815809013cf12'
             'c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4')
 
 prepare() {
