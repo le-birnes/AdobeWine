@@ -2,28 +2,50 @@
 
 **Adobe Creative Cloud apps on Linux, through a patched Wine.**
 
-AdobeWine is Wine 11.18 plus 59 patches. With it, these apps install through
-Creative Cloud, sign in with a normal Adobe account and run with GPU acceleration:
-Adobe Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder and the
-Creative Cloud desktop app.
+AdobeWine is Wine 11.18 plus 59 patches. With it, Adobe's apps install through Creative
+Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photoshop,
+Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
+for everyday use; After Effects works in part; InDesign and Bridge are next.
 
-> **Status: early testing (0.1.0).** It works well on the reference machine (Arch-based,
-> NVIDIA). It has not yet been tested on other machines, which is where you come in: please
+> **Status: early testing (0.2.1).** Built and measured on one reference machine (Arch-based,
+> NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
+> (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
 > [try it and report back](CONTRIBUTING.md), good or bad.
 
 | App (2026 versions) | State on the reference machine |
 |---|---|
-| Creative Cloud desktop 6.10 | Sign in, Home, Apps (install, update, open, uninstall), Fonts, Files |
-| Photoshop 27.10 | Home, New, layers, masks, type, filters, Remove Background, Generative Fill, export |
-| Illustrator 30.8 | Home, New, shapes, pen, type, effects, Pathfinder, Image Trace, save/export AI/PDF/SVG/PNG/JPEG |
-| Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export |
+| Creative Cloud desktop 6.10 | Sign in, Home, Apps (install, update, open, uninstall), Fonts, Files. The web installer works since 0.2.0 |
+| Photoshop 27.10 | Home, New, layers, masks, type, filters, Remove Background, Generative Fill, export. **All 75 filters and adjustments tested give the same output as on Windows** |
+| Illustrator 30.8 | Home, New, shapes, pen, type, effects, Pathfinder, Image Trace, save/export. **105 of 139 reference outputs match Windows** (PSD/SVG exports use the wrong font, see below) |
+| Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export; HEVC export 5-10% faster than Windows after correcting for the hardware |
 | Media Encoder 26.5 | Queue, presets, CUDA renderer, NVENC/NVDEC export |
 | Audition 26.5 | Recording, multitrack, effects, noise reduction, mixdown, video track |
+| After Effects 26.5 | **Partial:** opens projects, scripting, keyframes, the desktop's file picker (experimental). **Rendering does not work yet** (adding to the Render Queue hangs) |
+| InDesign 2026 | Installs; not tested yet |
+| Bridge | Opens; not tested yet |
 
-Exports were checked against the same exports made on Windows. For example, Photoshop PNG
-output is pixel-identical, Audition's normalised audio is bit-identical, and Premiere's 4K
-H.264 export took 9.9 s here against 9.1 s on Windows. Details are in
+How it is checked: a Windows machine lists every function of each app and saves a reference
+output for each; the same steps run under AdobeWine and the outputs are compared by pixels,
+audio samples or file contents, not by eye. So far 4705 functions are known and 241 tested
+(the 10-11 everyday functions per app, plus the full Photoshop filter and Illustrator effect
+sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
 [docs/STATUS.md](docs/STATUS.md).
+
+### What's new since 0.1.0
+- **0.2.0:** the Creative Cloud web installer no longer shows a blank white window (cause found
+  by NickPittas); Photoshop finds the GPU on Intel graphics whose driver offers only feature level
+  11_x, Segoe UI without Windows fonts, newest-release launching, menu icons and a Gentoo guide
+  (all switch87); file dialogs through your desktop's own picker as an experiment
+  (`WINE_FORCE_PORTAL=1`, ported from NickPittas' AE4Linux and Wine MR 10060).
+- **0.2.1:** two patches revised so Wine's own test suite passes again (winhttp connection reuse,
+  mshtml script loading); `adobewine aftereffects`; the launcher notices an app that closed but
+  did not exit and ends it, instead of silently opening nothing. Full list: [CHANGELOG.md](CHANGELOG.md).
+
+### Known gaps
+- After Effects cannot render (Render Queue hang) and does not relink moved footage by relative path.
+- Illustrator's PSD and SVG exports use Times New Roman instead of Adobe's bundled Myriad Pro.
+- Premiere's Import/Export modes draw black; some Audition buttons have the wrong shape.
+- Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists
 

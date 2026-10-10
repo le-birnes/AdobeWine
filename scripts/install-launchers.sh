@@ -56,6 +56,7 @@ entry illustrator "Adobe Illustrator" "Graphics;2DGraphics;VectorGraphics;" "app
 entry premiere "Adobe Premiere Pro" "AudioVideo;Video;AudioVideoEditing;" "" "adobe premiere pro.exe" "$PF/$(latest "Adobe Premiere Pro")/Adobe Premiere Pro.exe"
 entry audition "Adobe Audition" "AudioVideo;Audio;AudioVideoEditing;" "audio/x-wav;audio/wav;audio/mpeg;audio/flac;" "adobe audition.exe" "$PF/$(latest "Adobe Audition")/Adobe Audition.exe"
 entry encoder "Adobe Media Encoder" "AudioVideo;Video;" "" "adobe media encoder.exe" "$PF/$(latest "Adobe Media Encoder")/Adobe Media Encoder.exe"
+entry aftereffects "Adobe After Effects" "AudioVideo;Video;AudioVideoEditing;" "" "afterfx.exe" "$PF/$(latest "Adobe After Effects")/Support Files/AfterFX.exe"
 entry cc "Adobe Creative Cloud" "Graphics;" "" "creative cloud.exe" "$PF/Adobe Creative Cloud/ACC/Creative Cloud.exe"
 cat > "$APPS/adobewine-off.desktop" <<EOF
 [Desktop Entry]

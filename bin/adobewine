@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AdobeWine launcher.
 #   adobewine setup [--windows-fonts DIR]     create or refresh the Wine prefix (run once)
-#   adobewine photoshop|illustrator|premiere|audition|encoder|cc [files...]
+#   adobewine photoshop|illustrator|premiere|audition|encoder|aftereffects|cc [files...]
 #   adobewine run <program.exe> [args...]     run any Windows program in the AdobeWine prefix
 #   adobewine off [--force]                   close the Adobe apps like their close button, then stop Wine
 #   adobewine fix-signin                      use the built-in browser for Adobe sign-in (see docs)
@@ -23,6 +23,7 @@ case "$cmd" in
   premiere)    exe="$P\\$(latest "Adobe Premiere Pro")\\Adobe Premiere Pro.exe" ;;
   audition)    exe="$P\\$(latest "Adobe Audition")\\Adobe Audition.exe" ;;
   encoder)     exe="$P\\$(latest "Adobe Media Encoder")\\Adobe Media Encoder.exe" ;;
+  aftereffects) exe="$P\\$(latest "Adobe After Effects")\\Support Files\\AfterFX.exe" ;;
   cc)          exe="$P\\Adobe Creative Cloud\\ACC\\Creative Cloud.exe" ;;
   run)         exe="$1"; shift ;;
   setup)       exec "$ADOBEWINE_SRC/scripts/setup-prefix.sh" "$@" ;;
@@ -60,6 +61,34 @@ for a in "$@"; do
 done
 # Creative Cloud (Chromium): with GPU vsync a page change can stay off screen until a repaint.
 [ "$cmd" = cc ] && args=(--disable-gpu-vsync "${args[@]}")
+# An app that "closed" but did not exit (no window, process still there) would take this launch
+# through its single-instance check and nothing would open. Give it 10 s to finish exiting; if it
+# is still there without a window, end only that exe.
+name="${exe##*\\}"
+if [ "$cmd" != run ] && wine tasklist 2>/dev/null | grep -qiF "$name"; then
+  for _ in $(seq 10); do wine tasklist 2>/dev/null | grep -qiF "$name" || break; sleep 1; done
+  if wine tasklist 2>/dev/null | grep -qiF "$name"; then
+    # Does it still have a window? (python-xlib; without it, only warn)
+    has_win=$(python3 -c "
+import sys
+from Xlib import display
+d = display.Display()
+n = 0
+for w in d.screen().root.query_tree().children:
+    try:
+        c = w.get_wm_class()
+        n += bool(c and c[1].lower() == sys.argv[1].lower() and w.get_attributes().map_state == 2)
+    except Exception:
+        pass
+print(n)" "$name" 2>/dev/null)
+    if [ "$has_win" = 0 ]; then
+      wine taskkill /f /im "$name" >/dev/null 2>&1
+      echo "A previous ${name%.exe} was stuck closing (no window); ended it."
+    elif [ -z "$has_win" ]; then
+      echo "${name%.exe} is still running. If nothing opens, it may be stuck closing: adobewine off"
+    fi
+  fi
+fi
 log="$ADOBEWINE_HOME/logs/$cmd-$(date +%Y%m%d-%H%M%S).log"
 echo "log: $log"
 start=$SECONDS

@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-10-10
 
+- `adobewine aftereffects` starts After Effects (newest installed release).
+- The launcher notices an app that closed but did not exit (no window, process still there) and
+  ends only that app, instead of handing the new launch to it so that nothing opens.
+- `bin/env.sh` works when sourced from zsh.
 - Patch 0039 revised: chunked keep-alive replies no longer drop their connection (Wine's
   winhttp:notification tests pass again), and WinHttpReadData no longer waits to fill the
   buffer when some data is already there. New test: tests/winhttp/readavail.c.
