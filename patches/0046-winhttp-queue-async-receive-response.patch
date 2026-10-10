@@ -6,21 +6,44 @@ sent (the usual call from the SENDREQUEST_COMPLETE callback), so the caller wait
 server; Photoshop calls it holding its own lock, which its main thread needs at exit.
 Tests: wine/tests/winhttp/asyncrecv.c (3002 ms -> 0 ms) and asyncflow.c (async redirect +
 body read, sync session) with the local server in that folder.
+Queued only when called from the request's own task callbacks; app-thread calls read inline (fixes its 11 winhttp:notification failures).
 
 diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
-index 1c48892..a1558b2 100644
+index 1c48892..d771ccd 100644
 --- a/dlls/winhttp/request.c
 +++ b/dlls/winhttp/request.c
-@@ -3407,7 +3407,15 @@ BOOL WINAPI WinHttpReceiveResponse( HINTERNET hrequest, LPVOID reserved )
+@@ -558,6 +558,7 @@ void init_queue( struct queue *queue )
+     InitializeSRWLock( &queue->lock );
+     list_init( &queue->queued_tasks );
+     queue->callback_running = FALSE;
++    queue->thread_id = 0;
+ }
+ 
+ void stop_queue( struct queue *queue )
+@@ -613,7 +614,9 @@ static void CALLBACK task_callback( TP_CALLBACK_INSTANCE *instance, void *ctx )
+     task = get_next_task( queue, NULL );
+     while (task)
+     {
++        queue->thread_id = GetCurrentThreadId();
+         task->callback( task, FALSE );
++        queue->thread_id = 0;
+         /* Queue object may be freed by release_object() unless there is another task referencing it. */
+         next_task = get_next_task( queue, task );
+         release_object( task->obj );
+@@ -3407,7 +3410,19 @@ BOOL WINAPI WinHttpReceiveResponse( HINTERNET hrequest, LPVOID reserved )
          return FALSE;
      }
  
 -    ret = receive_response( request );
-+    if ((request->connect->hdr.flags & WINHTTP_FLAG_ASYNC) && request->state == REQUEST_STATE_REQUEST_SENT)
++    if ((request->connect->hdr.flags & WINHTTP_FLAG_ASYNC) && request->state == REQUEST_STATE_REQUEST_SENT
++        && request->queue.thread_id == GetCurrentThreadId())
 +    {
-+        /* Asynchronous: return at once and read the reply in a task, as Windows does. Apps call
-+         * this from the SENDREQUEST_COMPLETE callback, sometimes holding their own locks
-+         * (Photoshop), and the reply can take as long as the server needs. */
++        /* Called from a callback of this request's own task (usually SENDREQUEST_COMPLETE):
++         * return at once and read the reply in the next task. Apps call it there holding their
++         * own locks (Photoshop), and the reply can take as long as the server needs. A call
++         * from the app's own thread still reads the reply there, with the RECEIVING_RESPONSE,
++         * RESPONSE_RECEIVED and HEADERS_AVAILABLE callbacks on that thread (as on Windows,
++         * winhttp:notification). */
 +        request->state = REQUEST_STATE_READ_RESPONSE_QUEUED;
 +        ret = queue_receive_response( request );
 +    }
@@ -28,3 +51,15 @@ index 1c48892..a1558b2 100644
  
      release_object( &request->hdr );
      SetLastError( ret );
+diff --git a/dlls/winhttp/winhttp_private.h b/dlls/winhttp/winhttp_private.h
+index bf94c65..7388884 100644
+--- a/dlls/winhttp/winhttp_private.h
++++ b/dlls/winhttp/winhttp_private.h
+@@ -165,6 +165,7 @@ struct queue
+     SRWLOCK lock;
+     struct list queued_tasks;
+     BOOL callback_running;
++    DWORD thread_id; /* thread running one of this queue's tasks, 0 if none */
+ };
+ 
+ enum request_flags
