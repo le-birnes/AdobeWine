@@ -13,8 +13,8 @@ measurements, pixel comparisons against the same export made on Windows, or a sc
 - Creative Cloud: the first visit to the Apps tab can stay on its loading placeholder;
   switch to Home and back. (`adobewine cc` already applies a workaround.)
 - Premiere Pro: the UI hung once after Home > New Project (1 of 4 runs); not reproduced since.
-- Illustrator: SVG export with *SVG fonts* embedded uses Times New Roman metrics instead
-  of the real font (browsers ignore SVG fonts, so this rarely matters).
+- Illustrator (fixed on main, next release): SVG/PSD exports used Times New Roman instead of Myriad Pro because
+  Adobe's shared font folder was missing; the launcher now fills it.
 - Photoshop reports Windows 10 to itself (it crashes at start on the Windows 11 build
   number); everything else reports Windows 11.
 - Only NVIDIA has been tested. On AMD and Intel, CUDA-based features (Premiere's Mercury

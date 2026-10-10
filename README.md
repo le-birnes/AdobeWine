@@ -16,7 +16,7 @@ for everyday use; After Effects works in part; InDesign and Bridge are next.
 |---|---|
 | Creative Cloud desktop 6.10 | Sign in, Home, Apps (install, update, open, uninstall), Fonts, Files. The web installer works since 0.2.0 |
 | Photoshop 27.10 | Home, New, layers, masks, type, filters, Remove Background, Generative Fill, export. **All 75 filters and adjustments tested give the same output as on Windows** |
-| Illustrator 30.8 | Home, New, shapes, pen, type, effects, Pathfinder, Image Trace, save/export. **105 of 139 reference outputs match Windows** (PSD/SVG exports use the wrong font, see below) |
+| Illustrator 30.8 | Home, New, shapes, pen, type, effects, Pathfinder, Image Trace, save/export. **107 of 139 reference outputs match Windows**, the rest not compared yet |
 | Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export; HEVC export 5-10% faster than Windows after correcting for the hardware |
 | Media Encoder 26.5 | Queue, presets, CUDA renderer, NVENC/NVDEC export |
 | Audition 26.5 | Recording, multitrack, effects, noise reduction, mixdown, video track |
@@ -43,8 +43,7 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
 
 ### Known gaps
 - After Effects cannot render (Render Queue hang) and does not relink moved footage by relative path.
-- Illustrator's PSD and SVG exports use Times New Roman instead of Adobe's bundled Myriad Pro.
-- Premiere's Import/Export modes draw black; some Audition buttons have the wrong shape.
+- Premiere's Import/Export modes may draw black (being rechecked).
 - Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists

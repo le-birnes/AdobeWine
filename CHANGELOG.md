@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Illustrator's PSD and SVG exports use Myriad Pro like on Windows (they fell back to Times New
+  Roman): the launcher puts Adobe's core fonts (Myriad Pro, Minion Pro) from an installed app into
+  Common Files\\Adobe\\Fonts, the shared folder Adobe's installers create on Windows.
+
 ## 0.2.1 - 2026-10-10
 
 - `adobewine aftereffects` starts After Effects (newest installed release).

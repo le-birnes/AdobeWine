@@ -89,6 +89,17 @@ print(n)" "$name" 2>/dev/null)
     fi
   fi
 fi
+# Adobe's core fonts (Myriad Pro, Minion Pro) live in Common Files\Adobe\Fonts on Windows, where
+# exports that look fonts up by name (Illustrator's PSD text layers, SVG fonts) find them. The
+# installers do not create it under Wine, so those exports fell back to Times New Roman. Fill it
+# from an installed app's own Required/Fonts.
+core_fonts() {
+  local d="$WINEPREFIX/drive_c/Program Files/Common Files/Adobe/Fonts"
+  [ -f "$d/MyriadPro-Regular.otf" ] && return
+  find "$WINEPREFIX/drive_c/Program Files/Adobe" -path '*/Required/Fonts/*' \( -iname 'MyriadPro-*.otf' -o -iname 'MinionPro-*.otf' \) 2>/dev/null |
+    while read -r f; do mkdir -p "$d"; cp -n "$f" "$d/"; done
+}
+core_fonts
 log="$ADOBEWINE_HOME/logs/$cmd-$(date +%Y%m%d-%H%M%S).log"
 echo "log: $log"
 start=$SECONDS
