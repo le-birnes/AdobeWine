@@ -8,8 +8,10 @@ so this is reconstructed from that description:
   As", "... Sequence", "Force alphabetical order") are sent as FileChooser "choices"; the values
   the user picks are written back into the controls, with OnCheckButtonToggled/OnItemSelected for
   the ones that changed, before OnFileOk, where After Effects reads them.
-- An empty label (a check button without text, a list outside a labelled visual group) gets a
-  fallback label ("Option N", "Item N"), as portal backends need one.
+- A list's label is its visual group's label or, when it has none, the text control just before it
+  (After Effects labels its "Format:" combo box with AddText). Only a control left without any
+  label (a check button without text, an unlabelled list) gets a fallback label ("Option N",
+  "Item N"), as portal backends need one.
 - At most 8 controls and 16 items per list are sent; when a list is truncated, the selected item
   is kept in the last slot so the current choice is not lost.
 - A document portal path (a sandboxed app such as the Aegnux Flatpak gets
@@ -20,10 +22,10 @@ so this is reconstructed from that description:
 Only used when the portal is enabled (0060a); with custom controls only under the FORCE policy.
 
 diff --git a/dlls/comdlg32/itemdlg.c b/dlls/comdlg32/itemdlg.c
-index 9bc8ff5..b0da7e2 100644
+index 9bc8ff5..ee0b84a 100644
 --- a/dlls/comdlg32/itemdlg.c
 +++ b/dlls/comdlg32/itemdlg.c
-@@ -2877,10 +2877,183 @@ static enum portal_policy get_portal_policy(void)
+@@ -2877,10 +2877,208 @@ static enum portal_policy get_portal_policy(void)
      return PORTAL_POLICY_NEVER;
  }
  
@@ -51,8 +53,10 @@ index 9bc8ff5..b0da7e2 100644
 +    return text;
 +}
 +
++/* text: the last visible text control before ctrl (After Effects labels its "Format:" combo box
++ * with an AddText control, not a visual group) */
 +static void portal_add_choice(struct portal_choices *choices, customctrl **map,
-+                              customctrl *ctrl, customctrl *group)
++                              customctrl *ctrl, customctrl *group, customctrl *text)
 +{
 +    struct portal_choice *c;
 +    UINT count = 0, sel = 0, i, n;
@@ -74,6 +78,11 @@ index 9bc8ff5..b0da7e2 100644
 +    /* a check button has its own label, a list takes the label of its visual group */
 +    label = portal_get_window_text(ctrl->type == IDLG_CCTRL_CHECKBUTTON ? ctrl->hwnd :
 +                                   group ? group->hwnd : NULL);
++    if ((!label || !*label) && ctrl->type != IDLG_CCTRL_CHECKBUTTON && text)
++    {
++        free(label);
++        label = portal_get_window_text(text->hwnd);
++    }
 +    portal_choice_label(c->label, label, L"Option %u", choices->count + 1);
 +    free(label);
 +
@@ -138,7 +147,7 @@ index 9bc8ff5..b0da7e2 100644
 +
 +static void portal_build_choices(FileDialogImpl *This, struct portal_choices *choices, customctrl **map)
 +{
-+    customctrl *ctrl, *sub_ctrl;
++    customctrl *ctrl, *sub_ctrl, *text = NULL;
 +
 +    choices->count = 0;
 +    LIST_FOR_EACH_ENTRY(ctrl, &This->cctrls, customctrl, entry)
@@ -146,10 +155,28 @@ index 9bc8ff5..b0da7e2 100644
 +        if (ctrl->type == IDLG_CCTRL_VISUALGROUP)
 +        {
 +            if (!(ctrl->cdcstate & CDCS_VISIBLE)) continue;
++            text = NULL;
 +            LIST_FOR_EACH_ENTRY(sub_ctrl, &ctrl->sub_cctrls, customctrl, sub_cctrls_entry)
-+                portal_add_choice(choices, map, sub_ctrl, ctrl);
++            {
++                if (sub_ctrl->type == IDLG_CCTRL_TEXT)
++                {
++                    if (sub_ctrl->cdcstate & CDCS_VISIBLE) text = sub_ctrl;
++                    continue;
++                }
++                portal_add_choice(choices, map, sub_ctrl, ctrl, text);
++                text = NULL;
++            }
++            text = NULL;
 +        }
-+        else portal_add_choice(choices, map, ctrl, NULL);
++        else if (ctrl->type == IDLG_CCTRL_TEXT)
++        {
++            if (ctrl->cdcstate & CDCS_VISIBLE) text = ctrl;
++        }
++        else
++        {
++            portal_add_choice(choices, map, ctrl, NULL, text);
++            text = NULL;
++        }
 +    }
 +}
 +
@@ -207,7 +234,7 @@ index 9bc8ff5..b0da7e2 100644
      WCHAR folder_w[MAX_PATH];
      WCHAR *dir;
      UINT filter_index;
-@@ -2920,6 +3093,7 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
+@@ -2920,6 +3118,7 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
  			open_params->flags |= PORTAL_OPEN_FLAG_DIRECTORY;
  
  		open_params->max_results = (This->options & FOS_ALLOWMULTISELECT) ? 1024 : 1;
@@ -215,7 +242,7 @@ index 9bc8ff5..b0da7e2 100644
  		open_params->result_count = 0;
  		open_params->result_grouped = 0;
  		open_params->result_buffer[0] = 0;
-@@ -2937,6 +3111,8 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
+@@ -2937,6 +3136,8 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
          {
              const WCHAR *buf = open_params->result_buffer;
  
@@ -224,7 +251,7 @@ index 9bc8ff5..b0da7e2 100644
              if (!(open_params->flags & PORTAL_OPEN_FLAG_MULTIPLE) || open_params->result_count == 1)
              {
                  WCHAR *single_paths[2] = { (WCHAR *)buf, NULL };
-@@ -3091,6 +3267,7 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
+@@ -3091,6 +3292,7 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
  		                                    filter_index <= save_params->filter_count) ? filter_index :
  		                                    (save_params->filter_count ? 1 : 0);
  		save_params->flags = 0;
@@ -232,7 +259,7 @@ index 9bc8ff5..b0da7e2 100644
  
          /* Call Unix library */
          status = call_unix_portal(unix_portal_save_file, save_params);
-@@ -3103,6 +3280,8 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
+@@ -3103,6 +3305,8 @@ static HRESULT try_portal_itemdlg(FileDialogImpl *This, HWND hwndOwner)
  			PIDLIST_ABSOLUTE pidl = NULL;
  			HRESULT hr_array;
  

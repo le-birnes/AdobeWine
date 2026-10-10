@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Desktop file picker (experimental, `WINE_FORCE_PORTAL=1`): After Effects' "Format:" list shows its real
+  label instead of "Option 1" (patch 0060b). Portal tests added in tests/portal.
 - HiDPI: `adobewine setup` sets Wine's DPI from your desktop's scale (Xft.dpi), so the Adobe apps are
   no longer tiny on 1.5x/2x screens; `--dpi N` chooses another value.
 - Illustrator's PSD and SVG exports use Myriad Pro like on Windows (they fell back to Times New
