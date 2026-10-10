@@ -3,7 +3,11 @@
 #   ADOBEWINE_HOME   where the runtime, dependencies and prefix live
 #                    (default: ${XDG_DATA_HOME:-~/.local/share}/adobewine)
 #   WINEPREFIX       the Windows prefix (default: $ADOBEWINE_HOME/prefix)
-ADOBEWINE_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Path of this file: BASH_SOURCE in bash, %x in zsh (eval keeps bash from parsing zsh syntax).
+if [ -n "${BASH_SOURCE[0]:-}" ]; then _aw_env="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then eval '_aw_env="${(%):-%x}"'
+else _aw_env="$0"; fi
+ADOBEWINE_SRC="$(cd "$(dirname "$_aw_env")/.." && pwd)"; unset _aw_env
 ADOBEWINE_HOME="${ADOBEWINE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/adobewine}"
 export ADOBEWINE_SRC ADOBEWINE_HOME
 export WINEPREFIX="${WINEPREFIX:-$ADOBEWINE_HOME/prefix}"
