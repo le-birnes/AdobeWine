@@ -1,8 +1,183 @@
+winhttp: Return the data that is available from WinHttpReadData and drop the raw Content-Length when decompressing.
+
+With automatic decompression Wine removed Content-Length from its header table but not from
+the raw header text (WINHTTP_QUERY_RAW_HEADERS[_CRLF]); cpprestsdk parses the raw text, so
+Adobe GrowthSDK sized its buffer from the compressed length and overran the heap with the
+decompressed body (Creative Cloud.exe, TESTLOG 2026-10-04). It is now removed from both.
+WinHttpReadData waited to fill the caller's buffer; like Windows it now returns what is
+available: with data already buffered (after WinHttpQueryDataAvailable) only that, so no more
+than was reported, otherwise what one read from the stream gives.
+Returning at the end of a chunk must not keep a keep-alive connection from being reused: the
+chunked stream now parses framing that is already buffered (the last chunk, line ends) when
+asked for end of data, so the request finishes and the connection is pooled. The first version
+returned before the last chunk was read and dropped the connection (winhttp:notification
+test_persistent_connection: 6 failures, then a hang).
+Test: wine/tests/winhttp/readavail.c with wine/tests/winhttp/testserver.py.
+
 diff --git a/dlls/winhttp/request.c b/dlls/winhttp/request.c
-index acdd27d..1c48892 100644
+index acdd27d..22cefbd 100644
 --- a/dlls/winhttp/request.c
 +++ b/dlls/winhttp/request.c
-@@ -2750,6 +2750,26 @@ static DWORD handle_authorization( struct request *request, DWORD status )
+@@ -174,10 +174,74 @@ struct chunked_stream
+     } state;
+ };
+ 
++static char next_chunked_data_char( struct chunked_stream *stream )
++{
++    assert( stream->buf.size );
++    stream->buf.size--;
++    return stream->buf.buf[stream->buf.pos++];
++}
++
++/* parse one character of chunk framing (size line, line ends, last chunk) */
++static void parse_chunked_framing( struct chunked_stream *chunked_stream, struct request *request )
++{
++    char ch = next_chunked_data_char( chunked_stream );
++
++    switch (chunked_stream->state)
++    {
++    case CHUNKED_STREAM_STATE_READING_CHUNK_SIZE:
++        if (ch >= '0' && ch <= '9') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - '0';
++        else if (ch >= 'a' && ch <= 'f') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - 'a' + 10;
++        else if (ch >= 'A' && ch <= 'F') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - 'A' + 10;
++        else if (ch == ';' || ch == '\r' || ch == '\n')
++        {
++            TRACE( "reading %lu byte chunk\n", chunked_stream->chunk_size );
++            chunked_stream->buf.size++;
++            chunked_stream->buf.pos--;
++            if (request->content_length == ~0) request->content_length = chunked_stream->chunk_size;
++            else request->content_length += chunked_stream->chunk_size;
++            chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE;
++        }
++        break;
++
++    case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE:
++        if (ch == '\n')
++        {
++            if (chunked_stream->chunk_size)
++                chunked_stream->state = CHUNKED_STREAM_STATE_READING_CHUNK;
++            else
++                chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END;
++        }
++        else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
++        break;
++
++    case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
++        if (ch == '\n') chunked_stream->state = CHUNKED_STREAM_STATE_READING_CHUNK_SIZE;
++        else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
++        break;
++
++    case CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END:
++        if (ch == '\n') chunked_stream->state = CHUNKED_STREAM_STATE_END_OF_STREAM;
++        else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
++        break;
++
++    default:
++        assert( 0 );
++    }
++}
++
+ static BOOL chunked_end_of_data( struct data_stream *stream, struct request *request )
+ {
+     struct chunked_stream *chunked_stream = (struct chunked_stream *)stream;
+ 
++    /* Parse framing that has already been received, without waiting for more: after a read
++     * that stops at the end of a chunk (read_data returns what is available), the last chunk
++     * is often already buffered, and seeing it here lets the connection be reused. */
++    while (chunked_stream->buf.size && (chunked_stream->state == CHUNKED_STREAM_STATE_READING_CHUNK_SIZE ||
++           chunked_stream->state == CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE ||
++           chunked_stream->state == CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA ||
++           chunked_stream->state == CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END))
++        parse_chunked_framing( chunked_stream, request );
++
+     switch (chunked_stream->state)
+     {
+     case CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END:
+@@ -189,20 +253,12 @@ static BOOL chunked_end_of_data( struct data_stream *stream, struct request *req
+     }
+ }
+ 
+-static char next_chunked_data_char( struct chunked_stream *stream )
+-{
+-    assert( stream->buf.size );
+-    stream->buf.size--;
+-    return stream->buf.buf[stream->buf.pos++];
+-}
+-
+ static DWORD chunked_fill_buffer( struct data_stream *stream, struct request *request, struct read_buffer *buf )
+ {
+     struct chunked_stream *chunked_stream = (struct chunked_stream *)stream;
+     DWORD to_read, offset = 0, ret = ERROR_SUCCESS;
+     BOOL continue_read = TRUE;
+     int read_bytes;
+-    char ch;
+ 
+     if (chunked_end_of_data( stream, request ) || buf->size) return ERROR_SUCCESS;
+ 
+@@ -241,35 +297,6 @@ static DWORD chunked_fill_buffer( struct data_stream *stream, struct request *re
+ 
+         switch (chunked_stream->state)
+         {
+-        case CHUNKED_STREAM_STATE_READING_CHUNK_SIZE:
+-            ch = next_chunked_data_char( chunked_stream );
+-
+-            if (ch >= '0' && ch <= '9') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - '0';
+-            else if (ch >= 'a' && ch <= 'f') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - 'a' + 10;
+-            else if (ch >= 'A' && ch <= 'F') chunked_stream->chunk_size = chunked_stream->chunk_size * 16 + ch - 'A' + 10;
+-            else if (ch == ';' || ch == '\r' || ch == '\n')
+-            {
+-                TRACE( "reading %lu byte chunk\n", chunked_stream->chunk_size );
+-                chunked_stream->buf.size++;
+-                chunked_stream->buf.pos--;
+-                if (request->content_length == ~0) request->content_length = chunked_stream->chunk_size;
+-                else request->content_length += chunked_stream->chunk_size;
+-                chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE;
+-            }
+-            break;
+-
+-        case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE:
+-            ch = next_chunked_data_char( chunked_stream );
+-            if (ch == '\n')
+-            {
+-                if (chunked_stream->chunk_size)
+-                    chunked_stream->state = CHUNKED_STREAM_STATE_READING_CHUNK;
+-                else
+-                    chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END;
+-            }
+-            else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
+-            break;
+-
+         case CHUNKED_STREAM_STATE_READING_CHUNK:
+             assert( chunked_stream->chunk_size );
+             if (!to_read)
+@@ -313,22 +340,14 @@ static DWORD chunked_fill_buffer( struct data_stream *stream, struct request *re
+             }
+             break;
+ 
+-        case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
+-            ch = next_chunked_data_char( chunked_stream );
+-            if (ch == '\n') chunked_stream->state = CHUNKED_STREAM_STATE_READING_CHUNK_SIZE;
+-            else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
+-            break;
+-
+-        case CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END:
+-            ch = next_chunked_data_char( chunked_stream );
+-            if (ch == '\n') chunked_stream->state = CHUNKED_STREAM_STATE_END_OF_STREAM;
+-            else if (ch != '\r') WARN( "unexpected char '%c'\n", ch );
+-            break;
+-
+         case CHUNKED_STREAM_STATE_END_OF_STREAM:
+         case CHUNKED_STREAM_STATE_ERROR:
+             continue_read = FALSE;
+             break;
++
++        default:
++            parse_chunked_framing( chunked_stream, request );
++            break;
+         }
+     } while (continue_read);
+ 
+@@ -2750,6 +2769,26 @@ static DWORD handle_authorization( struct request *request, DWORD status )
      return ERROR_WINHTTP_LOGIN_FAILURE;
  }
  
@@ -29,7 +204,7 @@ index acdd27d..1c48892 100644
  static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
  {
      struct gzip_stream *gzip_stream;
-@@ -2779,7 +2799,11 @@ static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
+@@ -2779,7 +2818,11 @@ static DWORD init_gzip_stream( struct request *request, BOOL is_gzip )
      gzip_stream->parent = request->data_stream;
      request->data_stream = &gzip_stream->data_stream;
  
@@ -41,13 +216,20 @@ index acdd27d..1c48892 100644
      request->content_length = ~0ull;
      return ERROR_SUCCESS;
  }
-@@ -3531,6 +3555,10 @@ static DWORD read_data( struct request *request, char *buffer, DWORD size, DWORD
+@@ -3526,11 +3569,17 @@ static DWORD read_data( struct request *request, char *buffer, DWORD size, DWORD
+ {
+     DWORD bytes_read = 0, count, ret = ERROR_SUCCESS;
+ 
++    /* Like Windows, return what is available instead of waiting to fill the buffer: callers
++     * size their buffers from WinHttpQueryDataAvailable (Adobe GrowthSDK asks for one byte
++     * more than reported and overran its buffer when it got more). With data buffered, return
++     * only that; otherwise wait for one read from the stream. */
++    if (request->read.size) size = min( size, request->read.size );
+     while (size)
+     {
          if ((ret = read_data_stream( request, buffer + bytes_read, size, &count )) || !count) break;
          bytes_read += count;
          size -= count;
-+        /* Like Windows, return what was available instead of waiting for more: callers
-+         * size their buffers from WinHttpQueryDataAvailable (Adobe GrowthSDK asks for one
-+         * byte more than reported and overran its buffer when it got it). */
 +        if (!request->read.size) break;
      }
  

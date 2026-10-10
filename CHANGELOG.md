@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Patch 0039 revised: chunked keep-alive replies no longer drop their connection (Wine's
+  winhttp:notification tests pass again), and WinHttpReadData no longer waits to fill the
+  buffer when some data is already there. New test: tests/winhttp/readavail.c.
+
 ## 0.2.0 - 2026-10-10
 
 - Wine 11.18 with 59 patches.
