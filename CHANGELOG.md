@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- HiDPI: `adobewine setup` sets Wine's DPI from your desktop's scale (Xft.dpi), so the Adobe apps are
+  no longer tiny on 1.5x/2x screens; `--dpi N` chooses another value.
 - Illustrator's PSD and SVG exports use Myriad Pro like on Windows (they fell back to Times New
   Roman): the launcher puts Adobe's core fonts (Myriad Pro, Minion Pro) from an installed app into
   Common Files\\Adobe\\Fonts, the shared folder Adobe's installers create on Windows.

@@ -27,7 +27,7 @@ First steps for any problem:
 | Photoshop menu bar missing or white, UI frozen after start (100 % CPU) | Segoe UI is missing: `adobewine setup --windows-fonts <your Windows Fonts folder>`, or install the Selawik fonts and run `adobewine setup` again |
 | Text in some dialogs is blank | Same as above: add your Windows fonts |
 | A panel draws only after resizing | Please report it with `adobewine report`; resizing the window is the workaround |
-| Wrong scaling on HiDPI screens | `adobewine winecfg` > Graphics > Screen resolution (DPI); 96 = 100 %, 144 = 150 % |
+| Wrong scaling on HiDPI screens | `adobewine setup` now takes your desktop's scale (Xft.dpi) by default. To choose another: `adobewine setup --dpi 144` (96 = 100 %, 144 = 150 %, 192 = 200 %), then restart the apps |
 | Photoshop: no graphics processor (Preferences > Performance shows none, GPU features greyed out), or Camera Raw: "requires GPU acceleration to edit photos" | Run `adobewine setup` again: it checks the Direct3D 12 feature level and sets `VKD3D_FEATURE_LEVEL` (12_0 or 12_1) in the prefix when the driver offers only 11_x |
 
 ## Media

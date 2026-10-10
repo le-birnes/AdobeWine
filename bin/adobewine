@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AdobeWine launcher.
-#   adobewine setup [--windows-fonts DIR]     create or refresh the Wine prefix (run once)
+#   adobewine setup [--windows-fonts DIR] [--dpi N]  create or refresh the Wine prefix (run once)
 #   adobewine photoshop|illustrator|premiere|audition|encoder|aftereffects|cc [files...]
 #   adobewine run <program.exe> [args...]     run any Windows program in the AdobeWine prefix
 #   adobewine off [--force]                   close the Adobe apps like their close button, then stop Wine
