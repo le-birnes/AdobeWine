@@ -36,10 +36,10 @@ Pro, Media Encoder, Audition, After Effects, InDesign, Bridge.
 |---|---|---|---|
 | Creative Cloud | 10/10 | 10 / 248 | close button doesn't quit; hang after a self-update |
 | Photoshop | 10/10 | **85 / 661** | all 75 filters and adjustments run so far match Windows (60 pixel-identical, the random ones at the same noise level). Web Home panel blank |
-| Illustrator | 11/11 | 11 / 742 | memory use on 16 GB machines (#2) |
+| Illustrator | 11/11 | 118 / 1730 | 107 of 139 Windows reference outputs match, the rest not compared yet; memory use on 16 GB machines (#2) |
 | Premiere Pro | 10/10 | 10 / 368 | Import/Export modes draw black; HEVC export passes the speed gate (5-10% faster than Windows after correction) |
 | Media Encoder | 10/10 | 10 / 547 | |
-| Audition | 10/10 | 10 / 498 | some buttons drawn with the wrong shape (Direct2D stroke styles) |
+| Audition | 10/10 | 10 / 498 | |
 | After Effects | partial | being inventoried | **rendering is blocked**: adding a comp to the Render Queue hangs, so nothing can be rendered or exported yet. Scripting and keyframes work; typing into panels doesn't |
 | InDesign | not tested yet | | installs |
 | Bridge | opens | 0 / 149 | |
@@ -84,7 +84,7 @@ Dates after M2 depend on what the checklists show.
 3. **Web panels** (CEF and MSHTML): Photoshop Home, Premiere Learn, the licensing window.
 4. **Creative Cloud life cycle:** the hang after it updates itself, the close button.
 5. **Memory:** Illustrator on 16 GB machines.
-6. **HiDPI** scaling by default.
+6. ~~**HiDPI** scaling by default~~ done: `adobewine setup` follows the desktop's scale.
 
 **Always**
 - Re-run the checklists after each Adobe update; a drop counts as a serious bug.
