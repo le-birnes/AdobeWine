@@ -1,6 +1,6 @@
 # Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
 pkgname=adobewine-bin
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="AdobeWine (prebuilt): Wine 11.18 with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
 arch=(x86_64)
@@ -21,7 +21,6 @@ optdepends=(
   'nvidia-utils: NVIDIA GPU (CUDA, NVENC through nvidia-libs)'
   'vulkan-intel: Intel GPU'
   'vulkan-radeon: AMD GPU'
-  'inotify-tools: fix for the Creative Cloud web installer white window (until 0.2.0)'
   'p7zip: application icons for the desktop menu entries'
   'python-pillow: application icons for the desktop menu entries'
 )

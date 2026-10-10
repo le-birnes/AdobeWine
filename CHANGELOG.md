@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-10
 
+- Wine 11.18 with 59 patches.
 - Patch 0058: `DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL`, which Photoshop's GPU check asks for
   (switch87, #6).
 - Setup makes Segoe UI from Selawik when no Windows fonts are given, so Photoshop's menu bar
@@ -13,10 +14,12 @@
 - Gentoo install guide for the `::snakebyte` overlay (switch87, #7).
 - Patch 0043 fixed: a program that added a font itself and then listed fonts could lose a font
   family or hang (found by Wine's own gdi32 tests).
+- Patch 0046 narrowed: Wine's winhttp notification tests pass again; Photoshop still closes
+  cleanly.
 - Creative Cloud web installer 2.14.0.82 no longer shows a blank white window: patches 0055-0057
-  (mshtml ChildNode methods and `indeterminate`, jscript `Object.entries/values/assign`), and a
-  launcher workaround for current runtimes based on NickPittas' polyfill. Cause found by
-  NickPittas (#2).
+  (mshtml ChildNode methods and `indeterminate`, jscript `Object.entries/values/assign`). Cause
+  found by NickPittas (#2). The temporary launcher workaround for 0.1.0 runtimes is gone again,
+  as the runtime now has the fix.
 - Experimental, off by default: Windows file dialogs can use your desktop's own file picker
   (XDG portal) with `WINE_FORCE_PORTAL=1`; After Effects' import options show in it. Patches
   0060a/0060b, ported from NickPittas' AE4Linux (LGPL-2.1+) and Wine merge request 10060 by
