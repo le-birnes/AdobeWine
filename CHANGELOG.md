@@ -5,6 +5,8 @@
 - Patch 0039 revised: chunked keep-alive replies no longer drop their connection (Wine's
   winhttp:notification tests pass again), and WinHttpReadData no longer waits to fill the
   buffer when some data is already there. New test: tests/winhttp/readavail.c.
+- Patch 0035 revised: local scripts' load event fires after their 'complete' state change, as in
+  IE, so Wine's mshtml script tests no longer hang. New test page: tests/mshtml/loadevents.html.
 
 ## 0.2.0 - 2026-10-10
 

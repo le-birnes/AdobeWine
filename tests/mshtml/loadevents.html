@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><title>start</title>
+<!-- 0035 parts 2 and 3, run from a file:// URL with runpage.exe (IE11 mode):
+       runpage.exe Z:\path\to\loadevents.html 3000
+     (2) a file:// script's onload fires, after the script has run (as in IE);
+     (3) an async (script-inserted) local script runs only once the document is complete,
+         and a chain of scripts started from onload runs to the end.
+     The title ends in "PASS" or lists what failed. -->
+<script>
+var log = [], fails = [];
+function rec(s) { log.push(s); }
+function check(c, msg) { if (!c) fails.push(msg); }
+function load(name, onload) {
+    var s = document.createElement("script");
+    s.src = name;
+    s.onload = onload;
+    s.onerror = function() { rec("onerror " + name); };
+    document.getElementsByTagName("head")[0].appendChild(s);
+    return s;
+}
+function report() {
+    check(log.join(" ") === "onload1 onload2",
+          "events: '" + log.join(" ") + "' expected 'onload1 onload2'");
+    check(window.le_runs === 2, "le_runs " + window.le_runs + " expected 2");
+    check(window.le_states === "complete,complete,",
+          "states '" + window.le_states + "' expected 'complete,complete,'");
+    document.title = "mode " + document.documentMode + " | " + log.join(" ") + " | " +
+        (fails.length ? "FAIL " + fails.join("; ") : "PASS");
+}
+</script></head><body><script>
+check(document.readyState !== "complete", "document already complete while parsing");
+load("loadevents.js", function() {
+    check(window.le_runs === 1, "onload1 before the script ran (le_runs " + window.le_runs + ")");
+    rec("onload1");
+    load("loadevents.js", function() {
+        check(window.le_runs === 2, "onload2 before the script ran (le_runs " + window.le_runs + ")");
+        rec("onload2");
+    });
+});
+check(window.le_runs === undefined, "async local script ran synchronously while parsing");
+setTimeout(report, 1500);
+</script></body></html>

@@ -1,3 +1,33 @@
+From: le-birnes <226851066+le-birnes@users.noreply.github.com>
+Subject: [PATCH] mshtml: Implement MutationObserver.observe and load events for local scripts.
+
+Found with Creative Cloud desktop: Adobe Desktop Service runs a hidden host page from a
+file:// URL in MSHTML, and three gaps stalled it:
+
+1. MutationObserver.observe was a stub (core-js schedules Promise jobs with it). Implement
+   characterData, childList and attributes observation, subtree, and asynchronous delivery
+   with real MutationRecord objects.
+2. Scripts from file:// (and res://) never enter the 'loading' state, so their load event
+   never fired and onload-chained script loads stopped. Fire it as IE does, once the script
+   has run, after its 'complete' readystatechange; the readyState sequence is unchanged.
+   (The first version forced a 'loaded' readystatechange from a task instead; that swallowed
+   the later 'complete' one, and mshtml:script hung in events.html test_insert_script, which
+   waits for 'complete'.)
+3. Asynchronous (script-inserted) local scripts loaded synchronously, so the page's onload
+   chain finished before the host injected window.JSObject at readyState complete. They now
+   start once the document is complete, as IE loads them in the background.
+
+Tests: wine/tests/mshtml/mutation.html and loadevents.html (runpage.exe).
+---
+ dlls/mshtml/htmlnode.c       |   6 +
+ dlls/mshtml/htmlscript.h     |   1 +
+ dlls/mshtml/htmltextnode.c   |   3 +
+ dlls/mshtml/mshtml_private.h |   3 +
+ dlls/mshtml/mutation.c       | 537 ++++++++++++++++++++++++++++++++++++++++++-
+ dlls/mshtml/nsevents.c       |   1 +
+ dlls/mshtml/script.c         | 102 +++++++-
+ 7 files changed, 643 insertions(+), 10 deletions(-)
+
 diff --git a/dlls/mshtml/htmlnode.c b/dlls/mshtml/htmlnode.c
 index b82ab57..7a43f19 100644
 --- a/dlls/mshtml/htmlnode.c
@@ -22,6 +52,18 @@ index b82ab57..7a43f19 100644
  static inline HTMLDOMNode *impl_from_IHTMLDOMNode2(IHTMLDOMNode2 *iface)
  {
      return CONTAINING_RECORD(iface, HTMLDOMNode, IHTMLDOMNode2_iface);
+diff --git a/dlls/mshtml/htmlscript.h b/dlls/mshtml/htmlscript.h
+index dab2c44..f9c5e34 100644
+--- a/dlls/mshtml/htmlscript.h
++++ b/dlls/mshtml/htmlscript.h
+@@ -27,6 +27,7 @@ struct HTMLScriptElement {
+     BOOL parsed;
+     BOOL parse_on_bind;
+     BOOL pending_readystatechange_event;
++    BOOL load_event_pending;
+     READYSTATE readystate;
+     WCHAR *src_text; /* sctipt text downloaded from src */
+     BSCallback *binding; /* weak reference to current binding */
 diff --git a/dlls/mshtml/htmltextnode.c b/dlls/mshtml/htmltextnode.c
 index 3bb5cec..0e411a7 100644
 --- a/dlls/mshtml/htmltextnode.c
@@ -726,88 +768,56 @@ index 3fbc1cf..d808c08 100644
      if(doc_obj) {
          if(doc_obj->view_sink)
 diff --git a/dlls/mshtml/script.c b/dlls/mshtml/script.c
-index 786c499..fb064fc 100644
+index 786c499..4be6a22 100644
 --- a/dlls/mshtml/script.c
 +++ b/dlls/mshtml/script.c
-@@ -879,17 +879,24 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
- typedef struct {
-     event_task_t header;
-     HTMLScriptElement *elem;
-+    BOOL loaded;  /* fire the 'loaded' notification even if the state moved on since */
- } fire_readystatechange_task_t;
+@@ -858,8 +858,11 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
+     DOMEvent *event;
+     HRESULT hres;
  
- static void fire_readystatechange_proc(event_task_t *_task)
- {
-     fire_readystatechange_task_t *task = (fire_readystatechange_task_t*)_task;
-+    READYSTATE readystate;
+-    if(script->readystate != READYSTATE_LOADED ||
+-       dispex_compat_mode(&script->element.node.event_target.dispex) < COMPAT_MODE_IE10) {
++    compat_mode_t compat_mode = dispex_compat_mode(&script->element.node.event_target.dispex);
++    BOOL load_event = script->readystate == READYSTATE_LOADED;
++
++    if(compat_mode < COMPAT_MODE_IE10 ||
++       (script->readystate != READYSTATE_LOADED && compat_mode < COMPAT_MODE_IE11)) {
+         hres = create_document_event(script->element.node.doc, EVENTID_READYSTATECHANGE, &event);
+         if(SUCCEEDED(hres)) {
+             dispatch_event(&script->element.node.event_target, event);
+@@ -867,7 +870,14 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
+         }
+     }
  
-     if(!task->elem->pending_readystatechange_event)
+-    if(script->readystate == READYSTATE_LOADED) {
++    /* Scripts that never went through 'loading' (see ScriptBSC_stop_binding) get
++     * their load event once they have run, after the 'complete' readystatechange. */
++    if(script->readystate == READYSTATE_COMPLETE && script->load_event_pending) {
++        script->load_event_pending = FALSE;
++        load_event = TRUE;
++    }
++
++    if(load_event) {
+         hres = create_document_event(script->element.node.doc, EVENTID_LOAD, &event);
+         if(SUCCEEDED(hres)) {
+             dispatch_event(&script->element.node.event_target, event);
+@@ -904,6 +914,7 @@ static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTAT
+     script_elem->readystate = readystate;
+ 
+     if(readystate != READYSTATE_LOADED &&
++       !(readystate == READYSTATE_COMPLETE && script_elem->load_event_pending) &&
+        dispex_compat_mode(&script_elem->element.node.event_target.dispex) >= COMPAT_MODE_IE11)
          return;
  
-     task->elem->pending_readystatechange_event = FALSE;
-+    readystate = task->elem->readystate;
-+    if(task->loaded)
-+        task->elem->readystate = READYSTATE_LOADED;
-     dispatch_script_readystatechange_event(task->elem);
-+    if(task->loaded)
-+        task->elem->readystate = readystate;
+@@ -1077,6 +1088,8 @@ static void script_file_available(ScriptBSC *bsc)
+     script_elem->parsed = TRUE;
+     if(script_host->parse)
+         parse_elem_text(script_host, script_elem, script_elem->src_text);
++    if(script_elem->load_event_pending)
++        set_script_elem_readystate(script_elem, READYSTATE_COMPLETE);
  }
  
- static void fire_readystatechange_task_destr(event_task_t *_task)
-@@ -899,6 +906,28 @@ static void fire_readystatechange_task_destr(event_task_t *_task)
-     IHTMLScriptElement_Release(&task->elem->IHTMLScriptElement_iface);
- }
- 
-+static void queue_script_readystatechange_event(HTMLScriptElement *script_elem, BOOL loaded)
-+{
-+    fire_readystatechange_task_t *task;
-+    HRESULT hres;
-+
-+    if(script_elem->pending_readystatechange_event)
-+        return;
-+
-+    task = malloc(sizeof(*task));
-+    if(!task)
-+        return;
-+
-+    IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
-+    task->elem = script_elem;
-+    task->loaded = loaded;
-+
-+    hres = push_event_task(&task->header, script_elem->element.node.doc->window, fire_readystatechange_proc,
-+            fire_readystatechange_task_destr, script_elem->element.node.doc->window->task_magic);
-+    if(SUCCEEDED(hres))
-+        script_elem->pending_readystatechange_event = TRUE;
-+}
-+
- static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTATE readystate)
- {
-     script_elem->readystate = readystate;
-@@ -909,23 +938,7 @@ static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTAT
- 
-     if(readystate != READYSTATE_INTERACTIVE) {
-         if(!script_elem->element.node.doc->window->parser_callback_cnt) {
--            fire_readystatechange_task_t *task;
--            HRESULT hres;
--
--            if(script_elem->pending_readystatechange_event)
--                return;
--
--            task = malloc(sizeof(*task));
--            if(!task)
--                return;
--
--            IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
--            task->elem = script_elem;
--
--            hres = push_event_task(&task->header, script_elem->element.node.doc->window, fire_readystatechange_proc,
--                    fire_readystatechange_task_destr, script_elem->element.node.doc->window->task_magic);
--            if(SUCCEEDED(hres))
--                script_elem->pending_readystatechange_event = TRUE;
-+            queue_script_readystatechange_event(script_elem, FALSE);
-         }else {
-             script_elem->pending_readystatechange_event = FALSE;
-             dispatch_script_readystatechange_event(script_elem);
+ static inline ScriptBSC *impl_from_BSCallback(BSCallback *iface)
 @@ -1143,8 +1156,16 @@ static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
      assert(FAILED(result) || This->script_elem->binding == &This->bsc);
      This->script_elem->binding = NULL;
@@ -816,12 +826,12 @@ index 786c499..fb064fc 100644
 +    if(This->script_elem->readystate == READYSTATE_LOADING) {
          set_script_elem_readystate(This->script_elem, READYSTATE_LOADED);
 +    }else if(This->script_elem->readystate < READYSTATE_LOADED && SUCCEEDED(result)) {
-+        /* Scripts from other protocols (file://) never enter the 'loading' state and may
-+         * finish synchronously, while the inserting script still runs. Their load event
-+         * never fired, and pages that chain script loads through onload (Creative Cloud's
-+         * local host page) stalled. Fire it from a task, after the script has run. */
-+        This->script_elem->readystate = READYSTATE_LOADED;
-+        queue_script_readystatechange_event(This->script_elem, TRUE);
++        /* Scripts from other protocols (file://, res://) never enter the 'loading' state,
++         * so their load event never fired, and pages that chain script loads through
++         * onload (Creative Cloud's local host page) stalled. As in IE, fire it once the
++         * script has run, after its 'complete' readystatechange; the readyState sequence
++         * itself stays as it was (scripts may still see 'complete' only). */
++        This->script_elem->load_event_pending = TRUE;
 +    }
  
      if(SUCCEEDED(result)) {
