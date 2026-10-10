@@ -43,7 +43,7 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
 
 ### Known gaps
 - After Effects cannot render (Render Queue hang) and does not relink moved footage by relative path.
-- Premiere's Import/Export modes may draw black (being rechecked).
+- Premiere's Import and Export modes draw black (Edit mode, Home and Learn work); export through Media Encoder meanwhile.
 - Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists
