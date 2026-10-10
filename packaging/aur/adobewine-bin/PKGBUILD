@@ -1,6 +1,6 @@
 # Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
 pkgname=adobewine-bin
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="AdobeWine (prebuilt): Wine 11.18 with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
 arch=(x86_64)
@@ -25,7 +25,7 @@ optdepends=(
   'python-pillow: application icons for the desktop menu entries'
 )
 source=("${url}/releases/download/v${pkgver}/adobewine-${pkgver}-x86_64.tar.zst")
-sha256sums=('b941bf2120ce25bb9dca0ad8f52dc4344f4328ae2fc20192beca9ee6383faa2c')
+sha256sums=('be896f2c8d7afd787290ea0978e7669d66caca48dfd6ea53bb02497992ecb719')
 
 package() {
   cp -a "$srcdir/opt" "$pkgdir/"
