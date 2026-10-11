@@ -40,7 +40,7 @@ Pro, Media Encoder, Audition, After Effects, InDesign, Bridge.
 | Premiere Pro | 10/10 | 10 / 368 | Import/Export modes draw black; HEVC export passes the speed gate (5-10% faster than Windows after correction) |
 | Media Encoder | 10/10 | 10 / 547 | |
 | Audition | 10/10 | 10 / 498 | |
-| After Effects | partial | being inventoried | renders on main (Render Queue crash fixed, patch 0061); a real 300-layer comp matches the Windows render. Scripting, keyframes, panels work |
+| After Effects | partial | being inventoried | renders since 0.2.2 (Render Queue crash fixed, patch 0061); a real 300-layer comp matches the Windows render. Scripting, keyframes, panels work |
 | InDesign | not tested yet | | installs |
 | Bridge | opens | 0 / 149 | |
 
@@ -59,7 +59,7 @@ report yet.**
 
 | | Gate | State |
 |---|---|---|
-| M1 | 0.2.0 released, Wine's own tests green again for our patches | done (the last two regressions, 0035 and 0039, fixed on main) |
+| M1 | 0.2.0 released, Wine's own tests green again for our patches | done (the last two regressions, 0035 and 0039, fixed in 0.2.1) |
 | M2 | Full checklists for all 9 apps, so each has a real score | 7 of 9 (After Effects and InDesign to come) |
 | M3 | Every app at 90% or more; no open serious bug | |
 | M4 | Every app at 99% or more; speed and stability gates pass on NVIDIA | |

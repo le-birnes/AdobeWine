@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 - 2026-10-11
 
 - After Effects renders: adding a comp to the Render Queue no longer kills its main thread (stack
   overflow in Wine's Direct2D triangulation, patch 0061). Tested with a real 300-layer comp.

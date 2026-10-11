@@ -7,7 +7,7 @@ Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photos
 Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
 for everyday use; After Effects renders real projects now but is less tested; InDesign and Bridge are next.
 
-> **Status: early testing (0.2.1).** Built and measured on one reference machine (Arch-based,
+> **Status: early testing (0.2.2).** Built and measured on one reference machine (Arch-based,
 > NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
 > (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
 > [try it and report back](CONTRIBUTING.md), good or bad.
@@ -20,7 +20,7 @@ for everyday use; After Effects renders real projects now but is less tested; In
 | Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export; HEVC export 5-10% faster than Windows after correcting for the hardware |
 | Media Encoder 26.5 | Queue, presets, CUDA renderer, NVENC/NVDEC export |
 | Audition 26.5 | Recording, multitrack, effects, noise reduction, mixdown, video track |
-| After Effects 26.5 | Opens projects, scripting, keyframes, relinks moved footage; **renders** (on main, next release): a real 300-layer caption comp matches the Windows render (42.8-68.6 dB PSNR on 8 checked frames), 88 s vs 57 s on Windows. Less tested than the others |
+| After Effects 26.5 | Opens projects, scripting, keyframes, relinks moved footage; **renders** (since 0.2.2): a real 300-layer caption comp matches the Windows render (42.8-68.6 dB PSNR on 8 checked frames), 88 s vs 57 s on Windows. Less tested than the others |
 | InDesign 2026 | Installs; not tested yet |
 | Bridge | Opens; not tested yet |
 
@@ -39,10 +39,13 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   (`WINE_FORCE_PORTAL=1`, ported from NickPittas' AE4Linux and Wine MR 10060).
 - **0.2.1:** two patches revised so Wine's own test suite passes again (winhttp connection reuse,
   mshtml script loading); `adobewine aftereffects`; the launcher notices an app that closed but
-  did not exit and ends it, instead of silently opening nothing. Full list: [CHANGELOG.md](CHANGELOG.md).
+  did not exit and ends it, instead of silently opening nothing.
+- **0.2.2:** After Effects renders (a crash in Wine's Direct2D killed its main thread when a comp was
+  added to the Render Queue); Illustrator's PSD/SVG exports use Myriad Pro like on Windows; the apps
+  follow your desktop's scale on HiDPI screens; the desktop file picker shows After Effects' "Format:"
+  label. Full list: [CHANGELOG.md](CHANGELOG.md).
 
 ### Known gaps
-- After Effects (0.2.1 and older): adding to the Render Queue crashes the main thread, so it cannot render. Fixed on main (patch 0061), in the next release.
 - Premiere's Import and Export modes draw black (Edit mode, Home and Learn work); export through Media Encoder meanwhile.
 - Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
