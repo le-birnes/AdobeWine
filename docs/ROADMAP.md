@@ -40,7 +40,7 @@ Pro, Media Encoder, Audition, After Effects, InDesign, Bridge.
 | Premiere Pro | 10/10 | 10 / 368 | Import/Export modes draw black; HEVC export passes the speed gate (5-10% faster than Windows after correction) |
 | Media Encoder | 10/10 | 10 / 547 | |
 | Audition | 10/10 | 10 / 498 | |
-| After Effects | partial | being inventoried | **rendering is blocked**: adding a comp to the Render Queue hangs, so nothing can be rendered or exported yet. Scripting and keyframes work; typing into panels doesn't |
+| After Effects | partial | being inventoried | renders on main (Render Queue crash fixed, patch 0061); a real 300-layer comp matches the Windows render. Scripting, keyframes, panels work |
 | InDesign | not tested yet | | installs |
 | Bridge | opens | 0 / 149 | |
 
@@ -70,8 +70,7 @@ Dates after M2 depend on what the checklists show.
 ## What's being worked on
 
 **Now**
-- **After Effects Render Queue hang** (blocks all AE rendering). A minimal repro exists: an
-  empty comp in a new project is enough.
+- **Premiere's Import/Export modes** (still black): finding out what draws them on Windows.
 - Running the inventoried functions under Wine and comparing with the Windows outputs, app by
   app (Photoshop's filters are done; Illustrator, Media Encoder and Premiere references are next).
 - A real production job (an After Effects comp with a few hundred layers and animated

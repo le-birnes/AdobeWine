@@ -1,0 +1,76 @@
+From: le-birnes <226851066+le-birnes@users.noreply.github.com>
+Subject: [PATCH] server: Read and write process memory through a live thread id.
+
+When a process's main Unix thread has exited while other threads run on (a defunct thread group
+leader; Wine processes whose main Windows thread died), /proc/<pid>/mem and process_vm_readv(pid)
+fail although the address space is alive, so ReadProcessMemory returned ERROR_PARTIAL_COPY and
+winedbg could not attach ("Can't attach process: error 299"). Use the thread's own Unix tid for
+process_vm_readv/writev and /proc/<pid>/task/<tid>/mem, and pick a thread that has one.
+---
+diff --git a/server/ptrace.c b/server/ptrace.c
+--- a/server/ptrace.c
++++ b/server/ptrace.c
+@@ -336,6 +336,13 @@
+ 
+     LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
+     {
++        /* prefer a thread with a known Unix tid: the process id names the main Unix thread, which
++         * may have exited while other threads run on (a defunct thread group leader); its
++         * /proc/pid/mem and process_vm_readv then fail although the address space is alive */
++        if (thread->unix_pid != -1 && thread->unix_tid != -1) return thread;
++    }
++    LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
++    {
+         if (thread->unix_pid != -1) return thread;
+     }
+     set_error( STATUS_PROCESS_IS_TERMINATING );  /* process is dead */
+@@ -359,7 +366,7 @@
+     local.iov_len = remote.iov_len = size;
+     local.iov_base = dest;
+     remote.iov_base = (void *)(unsigned long)ptr;
+-    len = process_vm_readv( thread->unix_pid, &local, 1, &remote, 1, 0 );
++    len = process_vm_readv( thread->unix_tid != -1 ? thread->unix_tid : thread->unix_pid, &local, 1, &remote, 1, 0 );
+     if (len < 0 && (errno == ENOSYS || errno == EPERM))
+     {
+         not_supported = 1;
+@@ -394,7 +401,7 @@
+     local.iov_len = remote.iov_len = size;
+     local.iov_base = (void *)src;
+     remote.iov_base = (void *)(unsigned long)ptr;
+-    len = process_vm_writev( thread->unix_pid, &local, 1, &remote, 1, 0 );
++    len = process_vm_writev( thread->unix_tid != -1 ? thread->unix_tid : thread->unix_pid, &local, 1, &remote, 1, 0 );
+     if (len < 0 && (errno == ENOSYS || errno == EPERM))
+     {
+         not_supported = 1;
+@@ -429,10 +436,13 @@
+     {
+         if (len > 3)  /* /proc/pid/mem should be faster for large sizes */
+         {
+-            char procmem[24];
++            char procmem[48];
+             int fd;
+ 
+-            snprintf( procmem, sizeof(procmem), "/proc/%u/mem", thread->process->unix_pid );
++            if (thread->unix_tid != -1)
++                snprintf( procmem, sizeof(procmem), "/proc/%u/task/%u/mem", thread->process->unix_pid, thread->unix_tid );
++            else
++                snprintf( procmem, sizeof(procmem), "/proc/%u/mem", thread->process->unix_pid );
+             if ((fd = open( procmem, O_RDONLY )) != -1)
+             {
+                 ssize_t ret = pread( fd, dest, size, ptr );
+@@ -537,10 +547,13 @@
+ 
+         if (len > 3)
+         {
+-            char procmem[24];
++            char procmem[48];
+             int fd;
+ 
+-            snprintf( procmem, sizeof(procmem), "/proc/%u/mem", thread->process->unix_pid );
++            if (thread->unix_tid != -1)
++                snprintf( procmem, sizeof(procmem), "/proc/%u/task/%u/mem", thread->process->unix_pid, thread->unix_tid );
++            else
++                snprintf( procmem, sizeof(procmem), "/proc/%u/mem", thread->process->unix_pid );
+             if ((fd = open( procmem, O_WRONLY )) != -1)
+             {
+                 ssize_t r = pwrite( fd, src, size, ptr );

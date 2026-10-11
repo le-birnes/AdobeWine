@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- After Effects renders: adding a comp to the Render Queue no longer kills its main thread (stack
+  overflow in Wine's Direct2D triangulation, patch 0061). Tested with a real 300-layer comp.
+- winedbg can attach to processes whose main thread has exited (patch 0062).
 - Desktop file picker (experimental, `WINE_FORCE_PORTAL=1`): After Effects' "Format:" list shows its real
   label instead of "Option 1" (patch 0060b). Portal tests added in tests/portal.
 - HiDPI: `adobewine setup` sets Wine's DPI from your desktop's scale (Xft.dpi), so the Adobe apps are

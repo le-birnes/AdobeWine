@@ -1,0 +1,132 @@
+From: le-birnes <226851066+le-birnes@users.noreply.github.com>
+Subject: [PATCH] d2d1: Insert triangulation segments iteratively and give up when they do not converge.
+
+d2d_cdt_insert_segment() called itself for every step along the segment. With some of After
+Effects' panel geometry (the Render Queue panel, built when a comp is added to the queue) it
+recursed until the main thread's stack overflowed (EXCEPTION_STACK_OVERFLOW in d2d_cdt_ccw from
+d2d_cdt_insert_segment). The main thread died in WM_PAINT while the other threads ran on, so After
+Effects looked hung and aerender failed with "An unexpected error occurred while exporting".
+
+Iterate instead of recursing, and stop with an error, as for "Triangle not found", when the end
+vertex is not reached within 4 * edge_count + 1024 steps: that figure is then not filled, instead
+of the process dying. With this, Render Queue add returns and the 040 job comp renders.
+---
+diff --git a/dlls/d2d1/geometry.c b/dlls/d2d1/geometry.c
+--- a/dlls/d2d1/geometry.c
++++ b/dlls/d2d1/geometry.c
+@@ -2301,59 +2301,72 @@
+ static BOOL d2d_cdt_insert_segment(struct d2d_cdt *cdt, struct d2d_geometry *geometry,
+         const struct d2d_cdt_edge_ref *origin, struct d2d_cdt_edge_ref *edge, size_t end_vertex)
+ {
+-    struct d2d_cdt_edge_ref base_edge, current, new_origin, next, target;
+-    size_t current_destination, current_origin;
++    struct d2d_cdt_edge_ref base_edge, current, new_origin, next, target, start = *origin;
++    size_t current_destination, current_origin, steps = 0;
+ 
+-    for (current = *origin;; current = next)
++    /* This used to recurse for every step along the segment. Some of After Effects' panel
++     * geometry made it recurse until the main thread's stack overflowed; iterate instead, and
++     * give up on the figure if it does not reach the end vertex in a sane number of steps. */
++    for (;;)
+     {
+-        d2d_cdt_edge_next_origin(cdt, &next, &current);
+-
+-        current_destination = d2d_cdt_edge_destination(cdt, &current);
+-        if (current_destination == end_vertex)
+-        {
+-            d2d_cdt_edge_sym(edge, &current);
+-            return TRUE;
+-        }
+-
+-        current_origin = d2d_cdt_edge_origin(cdt, &current);
+-        if (d2d_cdt_ccw(cdt, end_vertex, current_origin, current_destination) == 0.0f
+-                && (cdt->vertices[current_destination].x > cdt->vertices[current_origin].x)
+-                == (cdt->vertices[end_vertex].x > cdt->vertices[current_origin].x)
+-                && (cdt->vertices[current_destination].y > cdt->vertices[current_origin].y)
+-                == (cdt->vertices[end_vertex].y > cdt->vertices[current_origin].y))
++        if (++steps > 4 * cdt->edge_count + 1024)
+         {
+-            d2d_cdt_edge_sym(&new_origin, &current);
+-            return d2d_cdt_insert_segment(cdt, geometry, &new_origin, edge, end_vertex);
++            ERR("Segment insertion does not converge, giving up.\n");
++            return FALSE;
+         }
+ 
+-        if (d2d_cdt_rightof(cdt, end_vertex, &next) && d2d_cdt_leftof(cdt, end_vertex, &current))
++        for (current = start;; current = next)
+         {
+-            d2d_cdt_edge_next_left(cdt, &base_edge, &current);
+-
+-            d2d_cdt_edge_sym(&base_edge, &base_edge);
+-            d2d_cdt_cut_edges(cdt, &target, &base_edge, d2d_cdt_edge_origin(cdt, origin), end_vertex);
+-            d2d_cdt_destroy_edge(cdt, &base_edge);
+-
+-            if (!d2d_cdt_connect(cdt, &base_edge, &target, &current))
+-                return FALSE;
+-            *edge = base_edge;
+-            if (!d2d_cdt_fixup(cdt, &base_edge))
+-                return FALSE;
+-            d2d_cdt_edge_sym(&base_edge, &base_edge);
+-            if (!d2d_cdt_fixup(cdt, &base_edge))
+-                return FALSE;
++            d2d_cdt_edge_next_origin(cdt, &next, &current);
+ 
+-            if (d2d_cdt_edge_origin(cdt, edge) == end_vertex)
++            current_destination = d2d_cdt_edge_destination(cdt, &current);
++            if (current_destination == end_vertex)
++            {
++                d2d_cdt_edge_sym(edge, &current);
+                 return TRUE;
+-            new_origin = *edge;
+-            return d2d_cdt_insert_segment(cdt, geometry, &new_origin, edge, end_vertex);
+-        }
++            }
+ 
+-        if (next.idx == origin->idx)
+-        {
+-            ERR("Triangle not found.\n");
+-            return FALSE;
++            current_origin = d2d_cdt_edge_origin(cdt, &current);
++            if (d2d_cdt_ccw(cdt, end_vertex, current_origin, current_destination) == 0.0f
++                    && (cdt->vertices[current_destination].x > cdt->vertices[current_origin].x)
++                    == (cdt->vertices[end_vertex].x > cdt->vertices[current_origin].x)
++                    && (cdt->vertices[current_destination].y > cdt->vertices[current_origin].y)
++                    == (cdt->vertices[end_vertex].y > cdt->vertices[current_origin].y))
++            {
++                d2d_cdt_edge_sym(&new_origin, &current);
++                break;
++            }
++
++            if (d2d_cdt_rightof(cdt, end_vertex, &next) && d2d_cdt_leftof(cdt, end_vertex, &current))
++            {
++                d2d_cdt_edge_next_left(cdt, &base_edge, &current);
++
++                d2d_cdt_edge_sym(&base_edge, &base_edge);
++                d2d_cdt_cut_edges(cdt, &target, &base_edge, d2d_cdt_edge_origin(cdt, &start), end_vertex);
++                d2d_cdt_destroy_edge(cdt, &base_edge);
++
++                if (!d2d_cdt_connect(cdt, &base_edge, &target, &current))
++                    return FALSE;
++                *edge = base_edge;
++                if (!d2d_cdt_fixup(cdt, &base_edge))
++                    return FALSE;
++                d2d_cdt_edge_sym(&base_edge, &base_edge);
++                if (!d2d_cdt_fixup(cdt, &base_edge))
++                    return FALSE;
++
++                if (d2d_cdt_edge_origin(cdt, edge) == end_vertex)
++                    return TRUE;
++                new_origin = *edge;
++                break;
++            }
++
++            if (next.idx == start.idx)
++            {
++                ERR("Triangle not found.\n");
++                return FALSE;
++            }
+         }
++        start = new_origin;
+     }
+ }
+ 

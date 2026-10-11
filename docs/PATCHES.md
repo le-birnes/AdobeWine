@@ -67,3 +67,5 @@ to WineHQ; help with that is very welcome.
 | 0058 | win32u | Implement DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL | switch87 |
 | 0060a | comdlg32 | Experimental: XDG desktop portal file dialogs (your desktop's own file picker), off unless `WINE_FORCE_PORTAL=1` or `HKCU\Software\Wine\X11 Driver\FileDialogPortal` = `always`/`auto` | NickPittas (AE4Linux); Wine MR 10060 by Alexander Wilms |
 | 0060b | comdlg32 | Portal dialogs: custom controls as choices (After Effects Import As / Sequence), document portal host paths | NickPittas (AE4Linux) |
+| 0061 | d2d1 | Insert triangulation segments iteratively and give up when they do not converge (After Effects' Render Queue panel overflowed the stack) | AdobeWine |
+| 0062 | server | Read and write process memory through a live thread id (winedbg on processes whose main thread exited) | AdobeWine |
