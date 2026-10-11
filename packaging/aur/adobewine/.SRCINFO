@@ -1,6 +1,6 @@
 pkgbase = adobewine
 	pkgdesc = AdobeWine: Wine 11.18 with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)
-	pkgver = 0.2.1
+	pkgver = 0.2.2
 	pkgrel = 1
 	url = https://github.com/le-birnes/AdobeWine
 	arch = x86_64
@@ -59,9 +59,9 @@ pkgbase = adobewine
 	options = !lto
 	options = !debug
 	options = staticlibs
-	source = adobewine-0.2.1.tar.gz::https://github.com/le-birnes/AdobeWine/archive/refs/tags/v0.2.1.tar.gz
+	source = adobewine-0.2.2.tar.gz::https://github.com/le-birnes/AdobeWine/archive/refs/tags/v0.2.2.tar.gz
 	source = https://dl.winehq.org/wine/source/11.x/wine-11.18.tar.xz
-	sha256sums = 29abc9b3caf8965ebd6b9d5a3fb7842dd46311b6c62e0369a7ede0bce5c39edd
+	sha256sums = 075693f48dd470c8c499bb68ca01a083f8c37ae9fcd07c22d587e5d9de115083
 	sha256sums = c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4
 
 pkgname = adobewine

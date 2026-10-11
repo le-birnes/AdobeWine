@@ -1,6 +1,6 @@
 # Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
 pkgname=adobewine
-pkgver=0.2.1
+pkgver=0.2.2
 _winever=11.18
 pkgrel=1
 pkgdesc="AdobeWine: Wine ${_winever} with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
@@ -30,7 +30,7 @@ optdepends=(
 )
 source=("adobewine-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
         "https://dl.winehq.org/wine/source/11.x/wine-${_winever}.tar.xz")
-sha256sums=('29abc9b3caf8965ebd6b9d5a3fb7842dd46311b6c62e0369a7ede0bce5c39edd'
+sha256sums=('075693f48dd470c8c499bb68ca01a083f8c37ae9fcd07c22d587e5d9de115083'
             'c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4')
 
 prepare() {
