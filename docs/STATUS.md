@@ -1,7 +1,8 @@
 # Status
 
-Results from the reference machine (see [COMPATIBILITY.md](COMPATIBILITY.md)), October
-2026, AdobeWine 0.1.0. Each item was done with real mouse and keyboard input or with the
+Results from the reference machine (see [COMPATIBILITY.md](COMPATIBILITY.md)), first recorded
+with AdobeWine 0.1.0 in October 2026; the current version is 0.2.2 (fixes since then: CHANGELOG.md,
+full per-app checklists: ROADMAP.md). Each item was done with real mouse and keyboard input or with the
 app's own scripting, and checked objectively: file properties with ffprobe or PIL, audio
 measurements, pixel comparisons against the same export made on Windows, or a screenshot.
 

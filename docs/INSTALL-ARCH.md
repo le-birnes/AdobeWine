@@ -73,7 +73,7 @@ checkout of the AUR package installs them without building anything.
 > ```
 >
 > or the prebuilt one (downloads the runtime from the
-> [v0.1.0 release](https://github.com/le-birnes/AdobeWine/releases)):
+> [latest release](https://github.com/le-birnes/AdobeWine/releases/latest), currently 0.2.2):
 > `cd AdobeWine/packaging/aur/adobewine-bin && makepkg -si`.
 
 Once on the AUR, with an AUR helper (`yay` or `paru`):

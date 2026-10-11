@@ -81,7 +81,7 @@ Each release has `adobewine-<version>-x86_64.tar.zst`, built on Arch Linux. It c
 recent glibc it may work:
 
 ```sh
-sudo tar -C / -xf adobewine-0.1.0-x86_64.tar.zst
+sudo tar -C / -xf adobewine-0.2.2-x86_64.tar.zst   # from the latest release
 sudo ln -sf /opt/adobewine/bin/adobewine /usr/local/bin/adobewine
 ```
 

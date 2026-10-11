@@ -20,7 +20,7 @@ body:
     attributes: { label: Desktop and session, placeholder: "GNOME 48 Wayland" }
   - type: input
     id: version
-    attributes: { label: AdobeWine version, placeholder: "0.1.0 (adobewine-bin)" }
+    attributes: { label: AdobeWine version, placeholder: "0.2.2 (adobewine-bin)" }
   - type: checkboxes
     id: apps
     attributes:
