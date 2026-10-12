@@ -74,3 +74,4 @@ to WineHQ; help with that is very welcome.
 | 0065 | win32u | No FreeType auto-hinting for GDI text | nvb-uy |
 | 0066 | d2d1 | Draw to a multisampled copy of the target bitmap (`WINE_D2D_MSAA`, default 8, 0 off) | nvb-uy |
 | 0067 | d2d1 | Analytic coverage for curve fills and strokes | nvb-uy |
+| 0068a | include | SmoothingModeAntiAlias8x4 and SmoothingModeAntiAlias8x8 | Wine MR 12221 by Thomas Ritter |

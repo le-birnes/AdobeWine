@@ -1,0 +1,17 @@
+From: Thomas Ritter <rittert@outlook.de>
+Subject: [PATCH] include: Add SmoothingModeAntiAlias8x4 and SmoothingModeAntiAlias8x8.
+---
+diff --git a/include/gdiplusenums.h b/include/gdiplusenums.h
+--- a/include/gdiplusenums.h
++++ b/include/gdiplusenums.h
+@@ -123,7 +123,9 @@ enum SmoothingMode
+     SmoothingModeHighSpeed   = QualityModeLow,
+     SmoothingModeHighQuality = QualityModeHigh,
+     SmoothingModeNone,
+-    SmoothingModeAntiAlias
++    SmoothingModeAntiAlias,
++    SmoothingModeAntiAlias8x4 = SmoothingModeAntiAlias,
++    SmoothingModeAntiAlias8x8
+ };
+ 
+ enum CompositingQuality
