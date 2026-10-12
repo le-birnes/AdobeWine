@@ -1,0 +1,208 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] dwrite: Place glyphs at quarter-pixel positions in natural rendering modes.
+
+Glyph run analysis truncated each glyph origin to a whole pixel, so letters in Photoshop's
+panels ended up one pixel too close or too far apart ("Un ti tled", "Adjustmen ts"). In the
+natural modes, split the origin into a whole pixel and a quarter-pixel fraction, rasterize the
+outline shifted by the fraction and cache those bitmaps per fraction. Other modes round to the
+nearest pixel instead of truncating.
+---
+diff --git a/dlls/dwrite/dwrite_private.h b/dlls/dwrite/dwrite_private.h
+--- a/dlls/dwrite/dwrite_private.h
++++ b/dlls/dwrite/dwrite_private.h
+@@ -590,6 +590,7 @@ struct dwrite_glyphbitmap
+     RECT bbox;
+     BYTE *buf;
+     DWRITE_MATRIX *m;
++    int subpixel_x;
+ };
+ 
+ enum dwrite_outline_tags
+diff --git a/dlls/dwrite/font.c b/dlls/dwrite/font.c
+--- a/dlls/dwrite/font.c
++++ b/dlls/dwrite/font.c
+@@ -155,9 +155,14 @@ static int fontface_get_glyph_advance(struct dwrite_fontface *fontface, float fo
+     return entry->advance;
+ }
+ 
++static unsigned short glyph_cache_mode(int subpixel_x)
++{
++    return subpixel_x ? 0x100 | subpixel_x : DWRITE_MEASURING_MODE_NATURAL;
++}
++
+ void dwrite_fontface_get_glyph_bbox(IDWriteFontFace *iface, struct dwrite_glyphbitmap *bitmap)
+ {
+-    struct cache_key key = { .size = bitmap->emsize, .glyph = bitmap->glyph, .mode = DWRITE_MEASURING_MODE_NATURAL };
++    struct cache_key key = { .size = bitmap->emsize, .glyph = bitmap->glyph, .mode = glyph_cache_mode(bitmap->subpixel_x) };
+     struct dwrite_fontface *fontface = unsafe_impl_from_IDWriteFontFace(iface);
+     struct get_glyph_bbox_params params;
+     struct cache_entry *entry;
+@@ -166,6 +171,7 @@ void dwrite_fontface_get_glyph_bbox(IDWriteFontFace *iface, struct dwrite_glyphb
+     params.simulations = bitmap->simulations;
+     params.glyph = bitmap->glyph;
+     params.emsize = bitmap->emsize;
++    params.subpixel_x = bitmap->subpixel_x;
+     matrix_2x2_from_dwrite_matrix(&params.m, bitmap->m ? bitmap->m : &identity);
+ 
+     EnterCriticalSection(&fontface->cs);
+@@ -196,7 +202,7 @@ static unsigned int get_glyph_bitmap_pitch(DWRITE_RENDERING_MODE1 rendering_mode
+ static HRESULT dwrite_fontface_get_glyph_bitmap(struct dwrite_fontface *fontface, DWRITE_RENDERING_MODE1 rendering_mode,
+         unsigned int *is_1bpp, struct dwrite_glyphbitmap *bitmap)
+ {
+-    struct cache_key key = { .size = bitmap->emsize, .glyph = bitmap->glyph, .mode = DWRITE_MEASURING_MODE_NATURAL };
++    struct cache_key key = { .size = bitmap->emsize, .glyph = bitmap->glyph, .mode = glyph_cache_mode(bitmap->subpixel_x) };
+     struct get_glyph_bitmap_params params;
+     const RECT *bbox = &bitmap->bbox;
+     unsigned int bitmap_size, _1bpp;
+@@ -211,6 +217,7 @@ static HRESULT dwrite_fontface_get_glyph_bitmap(struct dwrite_fontface *fontface
+     params.glyph = bitmap->glyph;
+     params.mode = rendering_mode;
+     params.emsize = bitmap->emsize;
++    params.subpixel_x = bitmap->subpixel_x;
+     params.bbox = bitmap->bbox;
+     params.pitch = bitmap->pitch;
+     params.bitmap = bitmap->buf;
+@@ -5831,6 +5838,27 @@ static ULONG WINAPI glyphrunanalysis_Release(IDWriteGlyphRunAnalysis *iface)
+     return refcount;
+ }
+ 
++static void glyphrunanalysis_split_origin(const struct dwrite_glyphrunanalysis *analysis, const D2D_POINT_2F *origin,
++        int *x, int *y, int *subpixel_x)
++{
++    *y = (int)floorf(origin->y + 0.5f);
++    switch (analysis->rendering_mode)
++    {
++        case DWRITE_RENDERING_MODE1_NATURAL:
++        case DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC:
++        case DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED:
++        {
++            int q = (int)floorf(origin->x * 4.0f + 0.5f);
++            *x = q >> 2;
++            *subpixel_x = (q & 3) * 16;
++            break;
++        }
++        default:
++            *x = (int)floorf(origin->x + 0.5f);
++            *subpixel_x = 0;
++    }
++}
++
+ static void glyphrunanalysis_get_texturebounds(struct dwrite_glyphrunanalysis *analysis, RECT *bounds)
+ {
+     struct dwrite_glyphbitmap glyph_bitmap;
+@@ -5853,8 +5881,10 @@ static void glyphrunanalysis_get_texturebounds(struct dwrite_glyphrunanalysis *a
+     for (i = 0; i < analysis->run.glyphCount; i++) {
+         RECT *bbox = &glyph_bitmap.bbox;
+         UINT32 bitmap_size;
++        int x, y;
+ 
+         glyph_bitmap.glyph = analysis->run.glyphIndices[i];
++        glyphrunanalysis_split_origin(analysis, &analysis->origins[i], &x, &y, &glyph_bitmap.subpixel_x);
+         dwrite_fontface_get_glyph_bbox(analysis->run.fontFace, &glyph_bitmap);
+ 
+         bitmap_size = get_glyph_bitmap_pitch(analysis->rendering_mode, bbox->right - bbox->left) *
+@@ -5862,7 +5892,7 @@ static void glyphrunanalysis_get_texturebounds(struct dwrite_glyphrunanalysis *a
+         if (bitmap_size > analysis->max_glyph_bitmap_size)
+             analysis->max_glyph_bitmap_size = bitmap_size;
+ 
+-        OffsetRect(bbox, analysis->origins[i].x, analysis->origins[i].y);
++        OffsetRect(bbox, x, y);
+         UnionRect(&analysis->bounds, &analysis->bounds, bbox);
+     }
+ 
+@@ -5936,10 +5966,11 @@ static HRESULT glyphrunanalysis_render(struct dwrite_glyphrunanalysis *analysis)
+     for (i = 0; i < analysis->run.glyphCount; ++i)
+     {
+         BYTE *src = glyph_bitmap.buf, *dst;
+-        int x, y, width, height;
++        int x, y, width, height, origin_x, origin_y;
+         unsigned int is_1bpp;
+ 
+         glyph_bitmap.glyph = analysis->run.glyphIndices[i];
++        glyphrunanalysis_split_origin(analysis, &analysis->origins[i], &origin_x, &origin_y, &glyph_bitmap.subpixel_x);
+         dwrite_fontface_get_glyph_bbox(analysis->run.fontFace, &glyph_bitmap);
+ 
+         if (IsRectEmpty(bbox))
+@@ -5957,7 +5988,7 @@ static HRESULT glyphrunanalysis_render(struct dwrite_glyphrunanalysis *analysis)
+             continue;
+         }
+ 
+-        OffsetRect(bbox, analysis->origins[i].x, analysis->origins[i].y);
++        OffsetRect(bbox, origin_x, origin_y);
+ 
+         /* blit to analysis bitmap */
+         dst = get_pixel_ptr(analysis->bitmap, analysis->texture_type, bbox, &analysis->bounds);
+diff --git a/dlls/dwrite/freetype.c b/dlls/dwrite/freetype.c
+--- a/dlls/dwrite/freetype.c
++++ b/dlls/dwrite/freetype.c
+@@ -561,6 +561,9 @@ static NTSTATUS get_glyph_bbox(void *args)
+         pFT_Glyph_Transform(glyph, &m, NULL);
+     }
+ 
++    if (params->subpixel_x && glyph->format == FT_GLYPH_FORMAT_OUTLINE)
++        pFT_Outline_Translate(&((FT_OutlineGlyph)glyph)->outline, params->subpixel_x, 0);
++
+     pFT_Glyph_Get_CBox(glyph, FT_GLYPH_BBOX_PIXELS, &bbox);
+     pFT_Done_Glyph(glyph);
+     pFT_Done_Size(size);
+@@ -698,6 +701,9 @@ static NTSTATUS get_glyph_bitmap(void *args)
+             pFT_Glyph_Transform(glyph, &m, NULL);
+         }
+ 
++        if (params->subpixel_x && glyph->format == FT_GLYPH_FORMAT_OUTLINE)
++            pFT_Outline_Translate(&((FT_OutlineGlyph)glyph)->outline, params->subpixel_x, 0);
++
+         if (params->mode == DWRITE_RENDERING_MODE1_ALIASED)
+             ret = freetype_get_aliased_glyph_bitmap(params, glyph);
+         else
+@@ -952,6 +958,7 @@ static NTSTATUS wow64_get_glyph_bbox(void *args)
+         ULONG glyph;
+         float emsize;
+         MATRIX_2X2 m;
++        int subpixel_x;
+         PTR32 bbox;
+     } const *params32 = args;
+     struct get_glyph_bbox_params params =
+@@ -961,6 +968,7 @@ static NTSTATUS wow64_get_glyph_bbox(void *args)
+         params32->glyph,
+         params32->emsize,
+         params32->m,
++        params32->subpixel_x,
+         ULongToPtr(params32->bbox),
+     };
+ 
+@@ -977,6 +985,7 @@ static NTSTATUS wow64_get_glyph_bitmap(void *args)
+         ULONG mode;
+         float emsize;
+         MATRIX_2X2 m;
++        int subpixel_x;
+         RECT bbox;
+         int pitch;
+         PTR32 bitmap;
+@@ -990,6 +999,7 @@ static NTSTATUS wow64_get_glyph_bitmap(void *args)
+         params32->mode,
+         params32->emsize,
+         params32->m,
++        params32->subpixel_x,
+         params32->bbox,
+         params32->pitch,
+         ULongToPtr(params32->bitmap),
+diff --git a/dlls/dwrite/unixlib.h b/dlls/dwrite/unixlib.h
+--- a/dlls/dwrite/unixlib.h
++++ b/dlls/dwrite/unixlib.h
+@@ -68,6 +68,7 @@ struct get_glyph_bbox_params
+     unsigned int glyph;
+     float emsize;
+     MATRIX_2X2 m;
++    int subpixel_x;
+     RECT *bbox;
+ };
+ 
+@@ -79,6 +80,7 @@ struct get_glyph_bitmap_params
+     unsigned int mode;
+     float emsize;
+     MATRIX_2X2 m;
++    int subpixel_x;
+     RECT bbox;
+     int pitch;
+     BYTE *bitmap;

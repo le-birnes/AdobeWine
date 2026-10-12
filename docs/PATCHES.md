@@ -69,3 +69,15 @@ to WineHQ; help with that is very welcome.
 | 0060b | comdlg32 | Portal dialogs: custom controls as choices (After Effects Import As / Sequence), document portal host paths | NickPittas (AE4Linux) |
 | 0061 | d2d1 | Insert triangulation segments iteratively and give up when they do not converge (After Effects' Render Queue panel overflowed the stack) | AdobeWine |
 | 0062 | server | Read and write process memory through a live thread id (winedbg on processes whose main thread exited) | AdobeWine |
+| 0063 | dwrite | No FreeType auto-hinting, unhinted glyph run outlines as on Windows | nvb-uy |
+| 0064 | dwrite | Quarter-pixel glyph positions in natural modes instead of truncated ones (uneven letter spacing) | nvb-uy |
+| 0065 | win32u | No FreeType auto-hinting for GDI text | nvb-uy |
+| 0066 | d2d1 | Draw to a multisampled copy of the target bitmap (`WINE_D2D_MSAA`, default 8, 0 off) | nvb-uy |
+| 0067 | d2d1 | Analytic coverage for curve fills and strokes | nvb-uy |
+| 0068a | include | SmoothingModeAntiAlias8x4 and SmoothingModeAntiAlias8x8 | Wine MR 12221 by Thomas Ritter |
+| 0068b | gdiplus | Antialiased filled paths (Photoshop toolbar pills and icons) | Wine MR 12221 by Thomas Ritter |
+| 0068c | gdiplus | Antialiased thin lines one pixel wide | Wine MR 12221 by Thomas Ritter |
+| 0068d | gdiplus | Antialiased lines widened with the default flatness | Wine MR 12221 by Thomas Ritter |
+| 0069 | win32u | Offscreen swapchains present immediately and vsync is paced to the display refresh rate, 59 to 237 fps at 240 Hz under XWayland (`WINE_OFFSCREEN_PACING`, `WINE_OFFSCREEN_REFRESH`) | nvb-uy |
+| 0070 | win32u | Copy waited-for offscreen presents only after they completed | nvb-uy |
+| 0071 | msvcp140 | Concurrency::details::platform::GetNextAsyncId (AdobeNotificationHelper aborted on the stub) | nvb-uy |

@@ -1,0 +1,482 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] d2d1: Draw to a multisampled copy of the target bitmap.
+
+SetAntialiasMode only stored the mode and all geometry was rasterized aliased, so the
+rounded rectangles, circles and icon outlines in Photoshop's UI had jagged edges.
+
+Target bitmaps get a multisampled texture that draws go to. It is loaded from the bitmap on the
+first draw after BeginDraw or after the bitmap changed outside of drawing (CopyFromBitmap,
+CopyFromMemory, GetDC), and resolved into the bitmap at EndDraw, Flush, SetTarget and before the
+bitmap is read through a brush or copied. Targets without a shader resource view, such as
+swapchain buffers, are loaded through a copy. WINE_D2D_MSAA sets the sample count, 8 by
+default, 0 turns it off.
+---
+diff --git a/dlls/d2d1/bitmap.c b/dlls/d2d1/bitmap.c
+--- a/dlls/d2d1/bitmap.c
++++ b/dlls/d2d1/bitmap.c
+@@ -91,6 +91,14 @@ static ULONG STDMETHODCALLTYPE d2d_bitmap_Release(ID2D1Bitmap1 *iface)
+             ID3D11RenderTargetView_Release(bitmap->rtv);
+         if (bitmap->surface)
+             IDXGISurface_Release(bitmap->surface);
++        if (bitmap->msaa_rtv)
++            ID3D11RenderTargetView_Release(bitmap->msaa_rtv);
++        if (bitmap->msaa_texture)
++            ID3D11Texture2D_Release(bitmap->msaa_texture);
++        if (bitmap->msaa_load_srv)
++            ID3D11ShaderResourceView_Release(bitmap->msaa_load_srv);
++        if (bitmap->msaa_load_texture)
++            ID3D11Texture2D_Release(bitmap->msaa_load_texture);
+         ID3D11Resource_Release(bitmap->resource);
+         ID2D1Factory_Release(bitmap->factory);
+         free(bitmap);
+@@ -149,6 +157,31 @@ static void STDMETHODCALLTYPE d2d_bitmap_GetDpi(ID2D1Bitmap1 *iface, float *dpi_
+     *dpi_y = bitmap->dpi_y;
+ }
+ 
++void d2d_bitmap_msaa_resolve(struct d2d_bitmap *bitmap)
++{
++    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc;
++    ID3D11DeviceContext *context;
++    ID3D11Device *device;
++
++    if (bitmap->msaa_state != D2D_MSAA_DIRTY)
++        return;
++
++    ID3D11RenderTargetView_GetDesc(bitmap->msaa_rtv, &rtv_desc);
++    ID3D11Resource_GetDevice(bitmap->resource, &device);
++    ID3D11Device_GetImmediateContext(device, &context);
++    ID3D11DeviceContext_ResolveSubresource(context, bitmap->resource, 0,
++            (ID3D11Resource *)bitmap->msaa_texture, 0, rtv_desc.Format);
++    ID3D11DeviceContext_Release(context);
++    ID3D11Device_Release(device);
++    bitmap->msaa_state = D2D_MSAA_SYNC;
++}
++
++void d2d_bitmap_msaa_invalidate(struct d2d_bitmap *bitmap)
++{
++    if (bitmap->msaa_state == D2D_MSAA_SYNC || bitmap->msaa_state == D2D_MSAA_DIRTY)
++        bitmap->msaa_state = D2D_MSAA_INVALID;
++}
++
+ static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromBitmap(ID2D1Bitmap1 *iface,
+         const D2D1_POINT_2U *dst_point, ID2D1Bitmap *bitmap, const D2D1_RECT_U *src_rect)
+ {
+@@ -171,6 +204,8 @@ static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromBitmap(ID2D1Bitmap1 *iface,
+         box.back = 1;
+     }
+ 
++    d2d_bitmap_msaa_resolve(src_bitmap);
++    d2d_bitmap_msaa_resolve(dst_bitmap);
+     ID3D11Resource_GetDevice(dst_bitmap->resource, &device);
+     ID3D11Device_GetImmediateContext(device, &context);
+     ID3D11DeviceContext_CopySubresourceRegion(context, dst_bitmap->resource, 0,
+@@ -178,6 +213,7 @@ static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromBitmap(ID2D1Bitmap1 *iface,
+             src_bitmap->resource, 0, src_rect ? &box : NULL);
+     ID3D11DeviceContext_Release(context);
+     ID3D11Device_Release(device);
++    d2d_bitmap_msaa_invalidate(dst_bitmap);
+ 
+     return S_OK;
+ }
+@@ -238,11 +274,13 @@ static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromMemory(ID2D1Bitmap1 *iface,
+         box.back = 1;
+     }
+ 
++    d2d_bitmap_msaa_resolve(bitmap);
+     ID3D11Resource_GetDevice(bitmap->resource, &device);
+     ID3D11Device_GetImmediateContext(device, &context);
+     ID3D11DeviceContext_UpdateSubresource(context, bitmap->resource, 0, dst_rect ? &box : NULL, src_data, pitch, 0);
+     ID3D11DeviceContext_Release(context);
+     ID3D11Device_Release(device);
++    d2d_bitmap_msaa_invalidate(bitmap);
+ 
+     return S_OK;
+ }
+diff --git a/dlls/d2d1/brush.c b/dlls/d2d1/brush.c
+--- a/dlls/d2d1/brush.c
++++ b/dlls/d2d1/brush.c
+@@ -1513,6 +1513,7 @@ static void d2d_brush_bind_bitmap(struct d2d_bitmap *bitmap, struct d2d_device_c
+     ID3D11DeviceContext *d3d_context;
+     HRESULT hr;
+ 
++    d2d_bitmap_msaa_resolve(bitmap);
+     ID3D11Device1_GetImmediateContext(context->d3d_device, &d3d_context);
+     ID3D11DeviceContext_PSSetShaderResources(d3d_context, brush_idx, 1, &bitmap->srv);
+ 
+diff --git a/dlls/d2d1/d2d1_private.h b/dlls/d2d1/d2d1_private.h
+--- a/dlls/d2d1/d2d1_private.h
++++ b/dlls/d2d1/d2d1_private.h
+@@ -209,6 +209,8 @@ struct d2d_device_context
+     struct d2d_shape_resources shape_resources[D2D_SHAPE_TYPE_COUNT];
+     ID3D11Buffer *vs_cb;
+     ID3D11PixelShader *ps;
++    ID3D11VertexShader *msaa_vs;
++    ID3D11PixelShader *msaa_ps;
+     ID3D11Buffer *ps_cb;
+     ID3D11Buffer *ib;
+     unsigned int vb_stride;
+@@ -463,8 +465,26 @@ struct d2d_bitmap
+     float dpi_x;
+     float dpi_y;
+     D2D1_BITMAP_OPTIONS options;
++
++    ID3D11Texture2D *msaa_texture;
++    ID3D11RenderTargetView *msaa_rtv;
++    ID3D11Texture2D *msaa_load_texture;
++    ID3D11ShaderResourceView *msaa_load_srv;
++    unsigned int msaa_state;
+ };
+ 
++enum d2d_msaa_state
++{
++    D2D_MSAA_NONE,
++    D2D_MSAA_INVALID,
++    D2D_MSAA_SYNC,
++    D2D_MSAA_DIRTY,
++    D2D_MSAA_UNSUPPORTED,
++};
++
++void d2d_bitmap_msaa_resolve(struct d2d_bitmap *bitmap);
++void d2d_bitmap_msaa_invalidate(struct d2d_bitmap *bitmap);
++
+ HRESULT d2d_bitmap_create(struct d2d_device_context *context, D2D1_SIZE_U size, const void *src_data,
+         UINT32 pitch, const D2D1_BITMAP_PROPERTIES1 *desc, struct d2d_bitmap **bitmap);
+ HRESULT d2d_bitmap_create_shared(struct d2d_device_context *context, REFIID iid, void *data,
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -117,6 +117,208 @@ static void d2d_clip_stack_pop(struct d2d_clip_stack *stack)
+     --stack->count;
+ }
+ 
++static unsigned int d2d_msaa_sample_count(void)
++{
++    static LONG count = -1;
++    char buffer[16];
++    LONG c;
++
++    if (count >= 0)
++        return count;
++    c = 8;
++    if (GetEnvironmentVariableA("WINE_D2D_MSAA", buffer, sizeof(buffer)))
++        c = atoi(buffer);
++    if (c != 0 && c != 2 && c != 4 && c != 8 && c != 16)
++        c = 8;
++    InterlockedExchange(&count, c);
++    return c;
++}
++
++static const char msaa_load_vs_code[] =
++    "float4 main(uint id : SV_VertexID) : SV_Position\n"
++    "{\n"
++    "    float2 t = float2((id << 1) & 2, id & 2);\n"
++    "    return float4(t.x * 2.0f - 1.0f, 1.0f - t.y * 2.0f, 0.0f, 1.0f);\n"
++    "}\n";
++
++static const char msaa_load_ps_code[] =
++    "Texture2D t : register(t0);\n"
++    "float4 main(float4 p : SV_Position) : SV_Target\n"
++    "{\n"
++    "    return t.Load(int3(p.xy, 0));\n"
++    "}\n";
++
++static HRESULT d2d_device_context_init_msaa_shaders(struct d2d_device_context *context)
++{
++    ID3D10Blob *vs, *ps;
++    HRESULT hr;
++
++    if (context->msaa_vs)
++        return S_OK;
++    if (FAILED(hr = D3DCompile(msaa_load_vs_code, sizeof(msaa_load_vs_code) - 1, "msaa_vs", NULL, NULL,
++            "main", "vs_4_0", 0, 0, &vs, NULL)))
++        return hr;
++    if (FAILED(hr = D3DCompile(msaa_load_ps_code, sizeof(msaa_load_ps_code) - 1, "msaa_ps", NULL, NULL,
++            "main", "ps_4_0", 0, 0, &ps, NULL)))
++    {
++        ID3D10Blob_Release(vs);
++        return hr;
++    }
++    hr = ID3D11Device1_CreateVertexShader(context->d3d_device, ID3D10Blob_GetBufferPointer(vs),
++            ID3D10Blob_GetBufferSize(vs), NULL, &context->msaa_vs);
++    if (SUCCEEDED(hr) && FAILED(hr = ID3D11Device1_CreatePixelShader(context->d3d_device,
++            ID3D10Blob_GetBufferPointer(ps), ID3D10Blob_GetBufferSize(ps), NULL, &context->msaa_ps)))
++    {
++        ID3D11VertexShader_Release(context->msaa_vs);
++        context->msaa_vs = NULL;
++    }
++    ID3D10Blob_Release(vs);
++    ID3D10Blob_Release(ps);
++    return hr;
++}
++
++static HRESULT d2d_bitmap_create_msaa(struct d2d_device_context *context, struct d2d_bitmap *bitmap)
++{
++    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc;
++    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
++    unsigned int count = d2d_msaa_sample_count();
++    D3D11_TEXTURE2D_DESC desc;
++    UINT levels = 0, support = 0;
++    ID3D11Texture2D *texture;
++    HRESULT hr;
++
++    if (count < 2 || !bitmap->rtv)
++        return E_FAIL;
++    if (FAILED(ID3D11Resource_QueryInterface(bitmap->resource, &IID_ID3D11Texture2D, (void **)&texture)))
++        return E_FAIL;
++    ID3D11Texture2D_GetDesc(texture, &desc);
++    ID3D11Texture2D_Release(texture);
++    ID3D11RenderTargetView_GetDesc(bitmap->rtv, &rtv_desc);
++    if (desc.SampleDesc.Count > 1 || rtv_desc.ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2D)
++        return E_FAIL;
++
++    if (FAILED(ID3D11Device1_CheckFormatSupport(context->d3d_device, rtv_desc.Format, &support))
++            || !(support & D3D11_FORMAT_SUPPORT_MULTISAMPLE_RESOLVE))
++        return E_FAIL;
++    for (; count >= 2; count /= 2)
++    {
++        if (SUCCEEDED(ID3D11Device1_CheckMultisampleQualityLevels(context->d3d_device, rtv_desc.Format,
++                count, &levels)) && levels)
++            break;
++    }
++    if (count < 2)
++        return E_FAIL;
++
++    desc.MipLevels = 1;
++    desc.ArraySize = 1;
++    desc.SampleDesc.Count = count;
++    desc.SampleDesc.Quality = 0;
++    desc.Usage = D3D11_USAGE_DEFAULT;
++    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
++    desc.CPUAccessFlags = 0;
++    desc.MiscFlags = 0;
++    if (FAILED(hr = ID3D11Device1_CreateTexture2D(context->d3d_device, &desc, NULL, &bitmap->msaa_texture)))
++        return hr;
++    rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
++    if (FAILED(hr = ID3D11Device1_CreateRenderTargetView(context->d3d_device,
++            (ID3D11Resource *)bitmap->msaa_texture, &rtv_desc, &bitmap->msaa_rtv)))
++        goto fail;
++
++    if (!bitmap->srv)
++    {
++        desc.SampleDesc.Count = 1;
++        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++        if (FAILED(hr = ID3D11Device1_CreateTexture2D(context->d3d_device, &desc, NULL, &bitmap->msaa_load_texture)))
++            goto fail;
++        srv_desc.Format = rtv_desc.Format;
++        srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
++        srv_desc.Texture2D.MostDetailedMip = 0;
++        srv_desc.Texture2D.MipLevels = 1;
++        if (FAILED(hr = ID3D11Device1_CreateShaderResourceView(context->d3d_device,
++                (ID3D11Resource *)bitmap->msaa_load_texture, &srv_desc, &bitmap->msaa_load_srv)))
++            goto fail;
++    }
++
++    TRACE("bitmap %p: %ux%u, %u samples.\n", bitmap, desc.Width, desc.Height, count);
++    bitmap->msaa_state = D2D_MSAA_INVALID;
++    return S_OK;
++
++fail:
++    if (bitmap->msaa_load_srv) ID3D11ShaderResourceView_Release(bitmap->msaa_load_srv);
++    if (bitmap->msaa_load_texture) ID3D11Texture2D_Release(bitmap->msaa_load_texture);
++    if (bitmap->msaa_rtv) ID3D11RenderTargetView_Release(bitmap->msaa_rtv);
++    ID3D11Texture2D_Release(bitmap->msaa_texture);
++    bitmap->msaa_load_srv = NULL;
++    bitmap->msaa_load_texture = NULL;
++    bitmap->msaa_rtv = NULL;
++    bitmap->msaa_texture = NULL;
++    return hr;
++}
++
++static HRESULT d2d_bitmap_load_msaa(struct d2d_device_context *context, ID3D11DeviceContext1 *d3d_context,
++        struct d2d_bitmap *bitmap)
++{
++    ID3D11ShaderResourceView *srv = bitmap->srv, *null_srv = NULL;
++    D3D11_RECT scissor_rect;
++    D3D11_VIEWPORT vp;
++    HRESULT hr;
++
++    if (FAILED(hr = d2d_device_context_init_msaa_shaders(context)))
++        return hr;
++    if (!srv)
++    {
++        ID3D11DeviceContext1_CopySubresourceRegion(d3d_context, (ID3D11Resource *)bitmap->msaa_load_texture,
++                0, 0, 0, 0, bitmap->resource, 0, NULL);
++        srv = bitmap->msaa_load_srv;
++    }
++
++    vp.TopLeftX = 0;
++    vp.TopLeftY = 0;
++    vp.Width = bitmap->pixel_size.width;
++    vp.Height = bitmap->pixel_size.height;
++    vp.MinDepth = 0.0f;
++    vp.MaxDepth = 1.0f;
++    scissor_rect.left = scissor_rect.top = 0;
++    scissor_rect.right = bitmap->pixel_size.width;
++    scissor_rect.bottom = bitmap->pixel_size.height;
++
++    ID3D11DeviceContext1_IASetInputLayout(d3d_context, NULL);
++    ID3D11DeviceContext1_IASetPrimitiveTopology(d3d_context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++    ID3D11DeviceContext1_VSSetShader(d3d_context, context->msaa_vs, NULL, 0);
++    ID3D11DeviceContext1_PSSetShader(d3d_context, context->msaa_ps, NULL, 0);
++    ID3D11DeviceContext1_PSSetShaderResources(d3d_context, 0, 1, &srv);
++    ID3D11DeviceContext1_RSSetViewports(d3d_context, 1, &vp);
++    ID3D11DeviceContext1_RSSetScissorRects(d3d_context, 1, &scissor_rect);
++    ID3D11DeviceContext1_RSSetState(d3d_context, context->rs);
++    ID3D11DeviceContext1_OMSetRenderTargets(d3d_context, 1, &bitmap->msaa_rtv, NULL);
++    ID3D11DeviceContext1_OMSetBlendState(d3d_context, NULL, NULL, D3D11_DEFAULT_SAMPLE_MASK);
++    ID3D11DeviceContext1_Draw(d3d_context, 3, 0);
++    ID3D11DeviceContext1_PSSetShaderResources(d3d_context, 0, 1, &null_srv);
++
++    bitmap->msaa_state = D2D_MSAA_SYNC;
++    return S_OK;
++}
++
++static ID3D11RenderTargetView *d2d_device_context_get_target_rtv(struct d2d_device_context *context,
++        ID3D11DeviceContext1 *d3d_context, BOOL *msaa)
++{
++    struct d2d_bitmap *bitmap = context->target.bitmap;
++
++    *msaa = FALSE;
++    if (bitmap->msaa_state == D2D_MSAA_NONE && FAILED(d2d_bitmap_create_msaa(context, bitmap)))
++        bitmap->msaa_state = D2D_MSAA_UNSUPPORTED;
++    if (bitmap->msaa_state == D2D_MSAA_UNSUPPORTED)
++        return bitmap->rtv;
++    if (bitmap->msaa_state == D2D_MSAA_INVALID && FAILED(d2d_bitmap_load_msaa(context, d3d_context, bitmap)))
++    {
++        WARN("Failed to load the multisampled target, drawing without antialiasing.\n");
++        bitmap->msaa_state = D2D_MSAA_UNSUPPORTED;
++        return bitmap->rtv;
++    }
++    *msaa = TRUE;
++    return bitmap->msaa_rtv;
++}
++
+ static void d2d_device_context_draw(struct d2d_device_context *render_target, enum d2d_shape_type shape_type,
+         ID3D11Buffer *ib, unsigned int index_count, ID3D11Buffer *vb, unsigned int vb_stride,
+         struct d2d_brush *brush, struct d2d_brush *opacity_brush)
+@@ -126,9 +328,11 @@ static void d2d_device_context_draw(struct d2d_device_context *render_target, en
+     ID3D11Device1 *device = render_target->d3d_device;
+     ID3D11DeviceContext1 *context;
+     ID3D11Buffer *vs_cb = render_target->vs_cb, *ps_cb = render_target->ps_cb;
++    ID3D11RenderTargetView *rtv;
+     D3D11_RECT scissor_rect;
+     unsigned int offset;
+     D3D11_VIEWPORT vp;
++    BOOL msaa;
+ 
+     vp.TopLeftX = 0;
+     vp.TopLeftY = 0;
+@@ -143,6 +347,8 @@ static void d2d_device_context_draw(struct d2d_device_context *render_target, en
+     ID3D11Device1_GetImmediateContext1(device, &context);
+     ID3D11DeviceContext1_SwapDeviceContextState(context, render_target->d3d_state, &prev_state);
+ 
++    rtv = d2d_device_context_get_target_rtv(render_target, context, &msaa);
++
+     ID3D11DeviceContext1_IASetInputLayout(context, shape_resources->il);
+     ID3D11DeviceContext1_IASetPrimitiveTopology(context, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+     ID3D11DeviceContext1_IASetIndexBuffer(context, ib, DXGI_FORMAT_R16_UINT, 0);
+@@ -177,7 +383,7 @@ static void d2d_device_context_draw(struct d2d_device_context *render_target, en
+     }
+     ID3D11DeviceContext1_RSSetScissorRects(context, 1, &scissor_rect);
+     ID3D11DeviceContext1_RSSetState(context, render_target->rs);
+-    ID3D11DeviceContext1_OMSetRenderTargets(context, 1, &render_target->target.bitmap->rtv, NULL);
++    ID3D11DeviceContext1_OMSetRenderTargets(context, 1, &rtv, NULL);
+     if (brush)
+     {
+         ID3D11DeviceContext1_OMSetBlendState(context, render_target->bs, NULL, D3D11_DEFAULT_SAMPLE_MASK);
+@@ -194,6 +400,8 @@ static void d2d_device_context_draw(struct d2d_device_context *render_target, en
+         ID3D11DeviceContext1_DrawIndexed(context, index_count, 0, 0);
+     else
+         ID3D11DeviceContext1_Draw(context, index_count, 0);
++    if (msaa)
++        render_target->target.bitmap->msaa_state = D2D_MSAA_DIRTY;
+ 
+     ID3D11DeviceContext1_SwapDeviceContextState(context, prev_state, NULL);
+     ID3D11DeviceContext1_Release(context);
+@@ -297,6 +505,10 @@ static ULONG STDMETHODCALLTYPE d2d_device_context_inner_Release(IUnknown *iface)
+         ID3D11Buffer_Release(context->ib);
+         ID3D11Buffer_Release(context->ps_cb);
+         ID3D11PixelShader_Release(context->ps);
++        if (context->msaa_vs)
++            ID3D11VertexShader_Release(context->msaa_vs);
++        if (context->msaa_ps)
++            ID3D11PixelShader_Release(context->msaa_ps);
+         ID3D11Buffer_Release(context->vs_cb);
+         for (i = 0; i < D2D_SHAPE_TYPE_COUNT; ++i)
+         {
+@@ -1902,6 +2114,7 @@ static void d2d_device_context_begin_layer(struct d2d_device_context *context, I
+             ID3D11Device1_GetImmediateContext(context->d3d_device, &d3d_context);
+             ID3D11DeviceContext_ClearRenderTargetView(d3d_context, b->rtv, transparent);
+             ID3D11DeviceContext_Release(d3d_context);
++            d2d_bitmap_msaa_invalidate(b);
+             break;
+         }
+     }
+@@ -2095,6 +2308,9 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_Flush(ID2D1DeviceContext6 *i
+ 
+     FIXME("iface %p, tag1 %p, tag2 %p stub!\n", iface, tag1, tag2);
+ 
++    if (context->target.type == D2D_TARGET_BITMAP)
++        d2d_bitmap_msaa_resolve(context->target.bitmap);
++
+     if (context->ops && context->ops->device_context_present)
+         context->ops->device_context_present(context->outer_unknown);
+ 
+@@ -2292,6 +2508,12 @@ static void STDMETHODCALLTYPE d2d_device_context_BeginDraw(ID2D1DeviceContext6 *
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+         d2d_command_list_begin_draw(context->target.command_list, context);
+ 
++    if (context->target.type == D2D_TARGET_BITMAP)
++    {
++        d2d_bitmap_msaa_resolve(context->target.bitmap);
++        d2d_bitmap_msaa_invalidate(context->target.bitmap);
++    }
++
+     memset(&context->error, 0, sizeof(context->error));
+ }
+ 
+@@ -2314,6 +2536,9 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_EndDraw(ID2D1DeviceContext6
+     if (tag2)
+         *tag2 = context->error.tag2;
+ 
++    if (context->target.type == D2D_TARGET_BITMAP)
++        d2d_bitmap_msaa_resolve(context->target.bitmap);
++
+     if (context->ops && context->ops->device_context_present)
+     {
+         if (FAILED(hr = context->ops->device_context_present(context->outer_unknown)))
+@@ -2777,6 +3002,9 @@ static void d2d_device_context_reset_target(struct d2d_device_context *context)
+     if (!context->target.object)
+         return;
+ 
++    if (context->target.type == D2D_TARGET_BITMAP)
++        d2d_bitmap_msaa_resolve(context->target.bitmap);
++
+     IUnknown_Release(context->target.object);
+     memset(&context->target, 0, sizeof(context->target));
+ 
+@@ -3950,6 +4178,7 @@ static HRESULT STDMETHODCALLTYPE d2d_gdi_interop_render_target_GetDC(ID2D1GdiInt
+     if (FAILED(hr = d2d_gdi_interop_get_surface(render_target, &surface)))
+         return hr;
+ 
++    d2d_bitmap_msaa_resolve(render_target->target.bitmap);
+     hr = IDXGISurface1_GetDC(surface, mode != D2D1_DC_INITIALIZE_MODE_COPY, &render_target->target.hdc);
+     IDXGISurface1_Release(surface);
+ 
+@@ -3980,6 +4209,7 @@ static HRESULT STDMETHODCALLTYPE d2d_gdi_interop_render_target_ReleaseDC(ID2D1Gd
+         update_rect = *update;
+     hr = IDXGISurface1_ReleaseDC(surface, update ? &update_rect : NULL);
+     IDXGISurface1_Release(surface);
++    d2d_bitmap_msaa_invalidate(render_target->target.bitmap);
+ 
+     return hr;
+ }
+@@ -4638,7 +4868,7 @@ static HRESULT d2d_device_context_init(struct d2d_device_context *render_target,
+     rs_desc.SlopeScaledDepthBias = 0.0f;
+     rs_desc.DepthClipEnable = TRUE;
+     rs_desc.ScissorEnable = TRUE;
+-    rs_desc.MultisampleEnable = FALSE;
++    rs_desc.MultisampleEnable = TRUE;
+     rs_desc.AntialiasedLineEnable = FALSE;
+     if (FAILED(hr = ID3D11Device1_CreateRasterizerState(render_target->d3d_device, &rs_desc, &render_target->rs)))
+     {

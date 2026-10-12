@@ -1,0 +1,58 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] d2d1: Antialias curve fills and strokes with analytic coverage.
+
+Curves were cut with clip() on their implicit function, which multisampling does not smooth
+because the shader runs once per pixel. Use g / fwidth(g) as the distance to the edge and
+scale the colour by the coverage. Straight segments and plain triangles have a constant g and
+keep the old inside test.
+---
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -4630,6 +4630,7 @@ static const char shape_ps_code[] =
+     "float4 main(struct input i) : SV_Target\n"
+     "{\n"
+     "    float4 colour;\n"
++    "    float g, fw, coverage;\n"
+     "\n"
+     "    colour = sample_brush(colour_brush, t0, s0, b0, i.p);\n"
+     "    if (opacity_brush.type < BRUSH_TYPE_COUNT)\n"
+@@ -4666,14 +4667,14 @@ static const char shape_ps_code[] =
+     "            df = 2.0f * uv.x * du - dv;\n"
+     "\n"
+     "            clip(dot(df, uv.zw));\n"
+-    "            clip(length(mul(i.stroke_transform, df)) - abs(uv.x * uv.x - uv.y));\n"
++    "            g = length(mul(i.stroke_transform, df)) - abs(uv.x * uv.x - uv.y);\n"
+     "        }\n"
+     "        else\n"
+     "        {\n"
+     "            df = 2.0f * uv.x * du + 2.0f * uv.y * dv;\n"
+     "\n"
+     "            clip(dot(df, uv.zw));\n"
+-    "            clip(length(mul(i.stroke_transform, df)) - abs(uv.x * uv.x + uv.y * uv.y - 1.0f));\n"
++    "            g = length(mul(i.stroke_transform, df)) - abs(uv.x * uv.x + uv.y * uv.y - 1.0f);\n"
+     "        }\n"
+     "    }\n"
+     "    else\n"
+@@ -4682,15 +4683,18 @@ static const char shape_ps_code[] =
+     "         * \"i.b.z\" determines which side of the curve is shaded. */\n"
+     "        if (!is_arc)\n"
+     "        {\n"
+-    "            clip((i.b.x * i.b.x - i.b.y) * i.b.z);\n"
++    "            g = (i.b.x * i.b.x - i.b.y) * i.b.z;\n"
+     "        }\n"
+     "        else\n"
+     "        {\n"
+-    "            clip((i.b.x * i.b.x + i.b.y * i.b.y - 1.0) * i.b.z);\n"
++    "            g = (i.b.x * i.b.x + i.b.y * i.b.y - 1.0) * i.b.z;\n"
+     "        }\n"
+     "    }\n"
+     "\n"
+-    "    return colour;\n"
++    "    fw = fwidth(g);\n"
++    "    coverage = fw > 0.0f ? saturate(0.5f + g / fw) : (g >= 0.0f ? 1.0f : 0.0f);\n"
++    "    clip(coverage - 1.0f / 512.0f);\n"
++    "    return colour * coverage;\n"
+     "}\n";
+ static const struct shape_info
+ {

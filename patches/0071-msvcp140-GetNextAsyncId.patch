@@ -1,0 +1,35 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] msvcp140: Implement Concurrency::details::platform::GetNextAsyncId.
+
+AdobeNotificationHelper.exe calls it through PPL tasks and was aborted on the stub.
+---
+diff --git a/dlls/msvcp140/msvcp140.spec b/dlls/msvcp140/msvcp140.spec
+--- a/dlls/msvcp140/msvcp140.spec
++++ b/dlls/msvcp140/msvcp140.spec
+@@ -1085,7 +1085,7 @@
+ @ stub -arch=win32 ?CaptureCallstack@platform@details@Concurrency@@YAIPAPAXII@Z
+ @ stub -arch=win64 ?CaptureCallstack@platform@details@Concurrency@@YA_KPEAPEAX_K1@Z
+ @ cdecl ?GetCurrentThreadId@platform@details@Concurrency@@YAJXZ() kernel32.GetCurrentThreadId
+-@ stub ?GetNextAsyncId@platform@details@Concurrency@@YAIXZ
++@ cdecl ?GetNextAsyncId@platform@details@Concurrency@@YAIXZ() platform__GetNextAsyncId
+ @ cdecl -arch=arm ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ(ptr) _ExceptionHolder__ReportUnhandledError
+ @ thiscall -arch=i386 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ(ptr) _ExceptionHolder__ReportUnhandledError
+ @ cdecl -arch=win64 ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ(ptr) _ExceptionHolder__ReportUnhandledError
+diff --git a/dlls/msvcp90/details.c b/dlls/msvcp90/details.c
+--- a/dlls/msvcp90/details.c
++++ b/dlls/msvcp90/details.c
+@@ -1091,6 +1091,14 @@ bool __cdecl _Task_impl_base__IsNonBlockingThread(void)
+     return FALSE;
+ }
+ 
++unsigned int __cdecl platform__GetNextAsyncId(void)
++{
++    static LONG id;
++
++    TRACE("()\n");
++    return InterlockedIncrement(&id);
++}
++
+ /* ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAAXXZ */
+ /* ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AAEXXZ */
+ /* ?ReportUnhandledError@_ExceptionHolder@details@Concurrency@@AEAAXXZ */
