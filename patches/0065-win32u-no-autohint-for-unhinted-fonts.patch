@@ -1,0 +1,17 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] win32u: Do not auto-hint fonts without hinting instructions.
+
+Same as the dwrite change for GDI text: use a font's own instructions and never invent them.
+---
+diff --git a/dlls/win32u/freetype.c b/dlls/win32u/freetype.c
+--- a/dlls/win32u/freetype.c
++++ b/dlls/win32u/freetype.c
+@@ -3088,7 +3088,7 @@ static FT_Int get_load_flags( UINT format )
+         break;
+     }
+ 
+-    return load_flags;
++    return load_flags | FT_LOAD_NO_AUTOHINT;
+ }
+ 
+ /*************************************************************
