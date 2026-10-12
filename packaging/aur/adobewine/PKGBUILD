@@ -60,7 +60,7 @@ package() {
   make DESTDIR="$pkgdir" install
   cd "$srcdir/AdobeWine-${pkgver}"
   install -d "$pkgdir/opt/adobewine/lib"
-  cp -r bin scripts shims tools patches docs README.md LICENSE VERSION "$pkgdir/opt/adobewine/"
+  cp -r bin config scripts shims tools patches docs README.md LICENSE VERSION "$pkgdir/opt/adobewine/"
   install -m644 d3d12.dll winclose.exe d3d12fl.exe "$pkgdir/opt/adobewine/lib/"
   install -d "$pkgdir/usr/bin"
   ln -s /opt/adobewine/bin/adobewine "$pkgdir/usr/bin/adobewine"
