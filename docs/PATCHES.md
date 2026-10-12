@@ -73,3 +73,4 @@ to WineHQ; help with that is very welcome.
 | 0064 | dwrite | Quarter-pixel glyph positions in natural modes instead of truncated ones (uneven letter spacing) | nvb-uy |
 | 0065 | win32u | No FreeType auto-hinting for GDI text | nvb-uy |
 | 0066 | d2d1 | Draw to a multisampled copy of the target bitmap (`WINE_D2D_MSAA`, default 8, 0 off) | nvb-uy |
+| 0067 | d2d1 | Analytic coverage for curve fills and strokes | nvb-uy |
