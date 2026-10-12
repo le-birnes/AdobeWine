@@ -1,0 +1,47 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] win32u: Copy waited-for offscreen presents only once they completed.
+
+Presents carrying a present id were copied to the toplevel right after the host present and
+again after vkWaitForPresentKHR. The first copy can pick up the previous or a half written
+frame. Only copy after the wait in that case. The delayed re-copy for sparse presents is not
+needed after a successful wait either, which removes a 10 ms sleep from the first present after
+every pause, for example at the start of a brush stroke.
+---
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -2098,6 +2098,8 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+     const VkPresentModeKHR *app_present_modes = NULL;
+     const VkPresentIdKHR *ids = NULL;
+     const VkPresentId2KHR *ids2 = NULL;
++    BOOL can_wait = (device->extensions.has_VK_KHR_present_wait && device->p_vkWaitForPresentKHR) ||
++                    (device->extensions.has_VK_KHR_present_wait2 && device->p_vkWaitForPresent2KHR);
+     VkResult res;
+ 
+     TRACE( "queue %p, present_info %p\n", queue, present_info );
+@@ -2156,9 +2158,13 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+         struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
+         VkResult swapchain_res = present_info->pResults ? present_info->pResults[i] : res;
+         struct surface *surface = swapchain->surface;
++        BOOL will_wait = FALSE;
+         RECT client_rect;
+ 
+-        client_surface_present( surface->client );
++        if (surface->client->offscreen && can_wait && res >= VK_SUCCESS)
++            will_wait = (ids && i < ids->swapchainCount && ids->pPresentIds && ids->pPresentIds[i]) ||
++                        (ids2 && i < ids2->swapchainCount && ids2->pPresentIds && ids2->pPresentIds[i]);
++        if (!will_wait) client_surface_present( surface->client );
+ 
+         if (swapchain_res < VK_SUCCESS) continue;
+         if (!get_surface_rect( surface->hwnd, &client_rect, get_dpi_for_window( surface->hwnd ) ))
+@@ -2210,8 +2216,8 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+                 waited = device->p_vkWaitForPresent2KHR( device->host.device, present_info->pSwapchains[i], &info ) == VK_SUCCESS;
+             }
+ 
+-            if (waited) client_surface_present( swapchain->surface->client );
+-            if (now - swapchain->last_present > 25) recopy = TRUE;
++            if (waited || (id && can_wait)) client_surface_present( swapchain->surface->client );
++            if (!waited && now - swapchain->last_present > 25) recopy = TRUE;
+             swapchain->last_present = now;
+ 
+             if (swapchain->paced && is_fifo_mode( app_present_modes && i < ARRAY_SIZE(host_modes) ?
