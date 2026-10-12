@@ -75,3 +75,4 @@ to WineHQ; help with that is very welcome.
 | 0066 | d2d1 | Draw to a multisampled copy of the target bitmap (`WINE_D2D_MSAA`, default 8, 0 off) | nvb-uy |
 | 0067 | d2d1 | Analytic coverage for curve fills and strokes | nvb-uy |
 | 0068a | include | SmoothingModeAntiAlias8x4 and SmoothingModeAntiAlias8x8 | Wine MR 12221 by Thomas Ritter |
+| 0068b | gdiplus | Antialiased filled paths (Photoshop toolbar pills and icons) | Wine MR 12221 by Thomas Ritter |
