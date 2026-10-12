@@ -20,6 +20,7 @@ export PATH="$ADOBEWINE_RUNTIME/bin:$PATH"
 export WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all,+err}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winemenubuilder.exe=d}"
+export FONTCONFIG_FILE="${FONTCONFIG_FILE:-$ADOBEWINE_SRC/config/fonts.conf}"
 mkdir -p "$ADOBEWINE_HOME/logs"
 export DXVK_LOG_PATH="$ADOBEWINE_HOME/logs"
 
