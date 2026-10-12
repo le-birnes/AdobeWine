@@ -1,0 +1,246 @@
+From: nvb-uy <105564560+nvb-uy@users.noreply.github.com>
+Subject: [PATCH] win32u: Present offscreen swapchains immediately and pace vsync to the display refresh rate.
+
+Child window swapchains, like Photoshop's canvas and the Direct2D panels, present to a hidden
+host window. Under XWayland that window has no frame callbacks, so FIFO presents complete on
+Xwayland's fallback timer of about 60 Hz. On a 240 Hz display a vsynced child window ran at
+59 fps and every present blocked for about 17 ms.
+
+Create these swapchains with the immediate present mode on the host, also in
+VkSwapchainPresentModesCreateInfoEXT and VkSwapchainPresentModeInfoEXT, and when the app asked
+for FIFO, wait in vkQueuePresentKHR until the next refresh period of the display. A test
+presenting a D3D11 swapchain in a child window goes from 59 to 237 fps at 240 Hz.
+WINE_OFFSCREEN_PACING=0 turns this off and WINE_OFFSCREEN_REFRESH sets the rate.
+---
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -26,6 +26,7 @@
+ 
+ #include <dlfcn.h>
+ #include <pthread.h>
++#include <time.h>
+ #include <unistd.h>
+ 
+ #include "ntstatus.h"
+@@ -159,6 +160,9 @@ struct swapchain
+     struct surface *surface;
+     VkExtent2D extents;
+     DWORD last_present;  /* tick count of the previous present, for offscreen re-copies */
++    BOOL paced;
++    VkPresentModeKHR app_mode;
++    uint64_t next_due_ns;
+ };
+ 
+ static struct swapchain *swapchain_from_handle( VkSwapchainKHR handle )
+@@ -1822,6 +1826,79 @@ static BOOL extents_equals( const VkExtent2D *extents, const RECT *rect )
+     return extents->width == rect->right - rect->left && extents->height == rect->bottom - rect->top;
+ }
+ 
++static BOOL offscreen_pacing_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled < 0)
++    {
++        const char *env = getenv( "WINE_OFFSCREEN_PACING" );
++        enabled = !env || atoi( env );
++    }
++    return enabled;
++}
++
++static uint64_t monotonic_ns(void)
++{
++    struct timespec ts;
++
++    clock_gettime( CLOCK_MONOTONIC, &ts );
++    return (uint64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
++}
++
++static uint64_t offscreen_frame_period_ns(void)
++{
++    static uint64_t period;
++
++    if (!period)
++    {
++        const char *env = getenv( "WINE_OFFSCREEN_REFRESH" );
++        unsigned int hz = env ? atoi( env ) : 0;
++
++        if (!hz)
++        {
++            DEVMODEW mode = {.dmSize = sizeof(mode)};
++            if (NtUserEnumDisplaySettings( NULL, ENUM_CURRENT_SETTINGS, &mode, 0 ) && mode.dmDisplayFrequency > 1)
++                hz = mode.dmDisplayFrequency;
++        }
++        if (hz < 24 || hz > 1000) hz = 60;
++        TRACE( "pacing offscreen vsync to %u Hz\n", hz );
++        period = 1000000000 / hz;
++    }
++    return period;
++}
++
++static BOOL is_fifo_mode( VkPresentModeKHR mode )
++{
++    return mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
++}
++
++static BOOL host_surface_supports_present_mode( struct vulkan_instance *instance, struct vulkan_physical_device *physical_device,
++                                                struct surface *surface, VkPresentModeKHR mode )
++{
++    VkPresentModeKHR modes[16];
++    uint32_t count = ARRAY_SIZE(modes);
++
++    if (instance->p_vkGetPhysicalDeviceSurfacePresentModesKHR( physical_device->host.physical_device,
++            surface->obj.host.surface, &count, modes ) < VK_SUCCESS)
++        return FALSE;
++    for (uint32_t i = 0; i < count; i++) if (modes[i] == mode) return TRUE;
++    return FALSE;
++}
++
++static void pace_offscreen_present( struct swapchain *swapchain )
++{
++    uint64_t period = offscreen_frame_period_ns(), now = monotonic_ns();
++
++    if (!swapchain->next_due_ns || now > swapchain->next_due_ns + period)
++    {
++        swapchain->next_due_ns = now + period;
++        return;
++    }
++    if (now < swapchain->next_due_ns) usleep( (swapchain->next_due_ns - now) / 1000 );
++    swapchain->next_due_ns += period;
++}
++
+ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwapchainCreateInfoKHR *create_info,
+                                              const VkAllocationCallbacks *allocator, VkSwapchainKHR *ret )
+ {
+@@ -1834,6 +1911,11 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+     VkSwapchainCreateInfoKHR create_info_host = *create_info;
+     VkSurfaceCapabilitiesKHR capabilities;
+     VkSwapchainKHR host_swapchain;
++    static const VkPresentModeKHR immediate_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
++    VkSwapchainPresentModesCreateInfoEXT *modes_info = NULL;
++    const VkPresentModeKHR *app_modes = NULL;
++    uint32_t app_mode_count = 0;
++    BOOL paced = FALSE;
+     struct ratio raw_dpi;
+     RECT client_rect;
+     VkResult res;
+@@ -1879,13 +1961,39 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+         create_info_host.pNext = &scaling;
+     }
+ 
+-    if (!(swapchain = calloc( 1, sizeof(*swapchain) ))) return VK_ERROR_OUT_OF_HOST_MEMORY;
++    if (surface->client->offscreen && offscreen_pacing_enabled() && is_fifo_mode( create_info->presentMode ) &&
++        host_surface_supports_present_mode( instance, physical_device, surface, VK_PRESENT_MODE_IMMEDIATE_KHR ))
++    {
++        VkBaseOutStructure *next;
+ 
+-    if ((res = device->p_vkCreateSwapchainKHR( device->host.device, &create_info_host, NULL, &host_swapchain )))
++        create_info_host.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
++        for (next = (VkBaseOutStructure *)create_info_host.pNext; next; next = next->pNext)
++        {
++            if (next->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT) continue;
++            modes_info = (VkSwapchainPresentModesCreateInfoEXT *)next;
++            app_modes = modes_info->pPresentModes;
++            app_mode_count = modes_info->presentModeCount;
++            modes_info->pPresentModes = &immediate_mode;
++            modes_info->presentModeCount = 1;
++        }
++        paced = TRUE;
++    }
++
++    if (!(swapchain = calloc( 1, sizeof(*swapchain) ))) res = VK_ERROR_OUT_OF_HOST_MEMORY;
++    else res = device->p_vkCreateSwapchainKHR( device->host.device, &create_info_host, NULL, &host_swapchain );
++    if (modes_info)
++    {
++        modes_info->pPresentModes = app_modes;
++        modes_info->presentModeCount = app_mode_count;
++    }
++    if (res)
+     {
+         free( swapchain );
+         return res;
+     }
++    swapchain->paced = paced;
++    swapchain->app_mode = create_info->presentMode;
++    TRACE( "swapchain %p, offscreen %u, paced %u\n", swapchain, surface->client->offscreen, paced );
+ 
+     vulkan_object_init( &swapchain->obj.obj, host_swapchain );
+     swapchain->surface = surface;
+@@ -1985,6 +2093,11 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+     VkSwapchainKHR swapchains_buffer[16], *swapchains = swapchains_buffer;
+     struct vulkan_device *device = queue->device;
+     const VkSwapchainKHR *client_swapchains;
++    VkPresentModeKHR host_modes[16];
++    VkSwapchainPresentModeInfoEXT *mode_info = NULL;
++    const VkPresentModeKHR *app_present_modes = NULL;
++    const VkPresentIdKHR *ids = NULL;
++    const VkPresentId2KHR *ids2 = NULL;
+     VkResult res;
+ 
+     TRACE( "queue %p, present_info %p\n", queue, present_info );
+@@ -2009,6 +2122,25 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+     client_swapchains = present_info->pSwapchains;
+     present_info->pSwapchains = swapchains;
+ 
++    for (VkBaseOutStructure *next = (VkBaseOutStructure *)present_info->pNext; next; next = next->pNext)
++    {
++        if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) ids = (const VkPresentIdKHR *)next;
++        else if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) ids2 = (const VkPresentId2KHR *)next;
++        else if (next->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT)
++            mode_info = (VkSwapchainPresentModeInfoEXT *)next;
++    }
++    if (mode_info && mode_info->swapchainCount <= ARRAY_SIZE(host_modes))
++    {
++        app_present_modes = mode_info->pPresentModes;
++        for (uint32_t i = 0; i < mode_info->swapchainCount; i++)
++        {
++            struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
++            host_modes[i] = swapchain->paced ? VK_PRESENT_MODE_IMMEDIATE_KHR : app_present_modes[i];
++        }
++        mode_info->pPresentModes = host_modes;
++    }
++    else mode_info = NULL;
++
+     for (uint32_t i = 0; i < present_info->swapchainCount; i++)
+     {
+         struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
+@@ -2017,6 +2149,7 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+     }
+ 
+     res = device->p_vkQueuePresentKHR( queue->host.queue, present_info );
++    if (mode_info) mode_info->pPresentModes = app_present_modes;
+ 
+     for (uint32_t i = 0; i < present_info->swapchainCount; i++)
+     {
+@@ -2053,19 +2186,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+      * sparse, copy once more after a short wait. */
+     if (res >= VK_SUCCESS)
+     {
+-        const VkPresentIdKHR *ids = NULL;
+-        const VkPresentId2KHR *ids2 = NULL;
+-        const VkBaseInStructure *next;
+         static int delay_us = -1;
+         DWORD now = NtGetTickCount();
+         BOOL recopy = FALSE;
+ 
+-        for (next = present_info->pNext; next; next = next->pNext)
+-        {
+-            if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) ids = (const VkPresentIdKHR *)next;
+-            else if (next->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) ids2 = (const VkPresentId2KHR *)next;
+-        }
+-
+         for (uint32_t i = 0; i < present_info->swapchainCount; i++)
+         {
+             struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
+@@ -2089,6 +2213,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+             if (waited) client_surface_present( swapchain->surface->client );
+             if (now - swapchain->last_present > 25) recopy = TRUE;
+             swapchain->last_present = now;
++
++            if (swapchain->paced && is_fifo_mode( app_present_modes && i < ARRAY_SIZE(host_modes) ?
++                                                  app_present_modes[i] : swapchain->app_mode ))
++                pace_offscreen_present( swapchain );
+         }
+         if (delay_us < 0)
+         {
