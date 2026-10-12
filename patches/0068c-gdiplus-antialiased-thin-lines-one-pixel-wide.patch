@@ -1,0 +1,144 @@
+From: Thomas Ritter <rittert@outlook.de>
+Subject: [PATCH] gdiplus: Draw antialiased thin lines one pixel wide.
+
+Like native, widen them with a one pixel wide pen without miters and
+fill them antialiased instead of drawing them aliased.
+---
+diff --git a/dlls/gdiplus/graphics.c b/dlls/gdiplus/graphics.c
+--- a/dlls/gdiplus/graphics.c
++++ b/dlls/gdiplus/graphics.c
+@@ -4190,13 +4190,15 @@ static GpStatus SOFTWARE_GdipDrawPath(GpGraphics *graphics, GpPen *pen, GpPath *
+     GpStatus stat;
+     GpPath *wide_path;
+     GpMatrix *transform=NULL;
++    GpPen hairline;
+     REAL flatness=1.0;
++    BOOL thin=FALSE;
+ 
+     /* Check if the final pen thickness in pixels is too thin. */
+     if (pen->unit == UnitPixel)
+     {
+         if (pen->width < 1.415)
+-            return SOFTWARE_GdipDrawThinPath(graphics, pen, path);
++            thin = TRUE;
+     }
+     else
+     {
+@@ -4215,7 +4217,20 @@ static GpStatus SOFTWARE_GdipDrawPath(GpGraphics *graphics, GpPen *pen, GpPath *
+              (points[1].Y-points[0].Y)*(points[1].Y-points[0].Y) < 2.0001) &&
+             ((points[2].X-points[0].X)*(points[2].X-points[0].X) +
+              (points[2].Y-points[0].Y)*(points[2].Y-points[0].Y) < 2.0001))
++            thin = TRUE;
++    }
++
++    if (thin)
++    {
++        if (!is_antialiased(graphics))
+             return SOFTWARE_GdipDrawThinPath(graphics, pen, path);
++
++        /* antialiased thin lines are one pixel wide and not mitered */
++        hairline = *pen;
++        hairline.unit = UnitPixel;
++        hairline.width = 1.0;
++        hairline.join = LineJoinBevel;
++        pen = &hairline;
+     }
+ 
+     stat = GdipClonePath(path, &wide_path);
+diff --git a/dlls/gdiplus/tests/graphics.c b/dlls/gdiplus/tests/graphics.c
+--- a/dlls/gdiplus/tests/graphics.c
++++ b/dlls/gdiplus/tests/graphics.c
+@@ -7559,6 +7559,8 @@ static void test_antialiasing(void)
+         { SmoothingModeAntiAlias8x8, PixelOffsetModeNone, 1.1, 0x60000000, 0x60000000 },
+         { SmoothingModeHighQuality, PixelOffsetModeNone, 1.1, 0x60000000, 0x40000000 },
+     };
++    static const GpPointF join[] = { { 12.0, 3.0 }, { 16.0, 28.0 }, { 20.0, 3.0 } };
++    static const REAL widths[] = { 0.5, 1.2 };
+     GpGraphics *graphics;
+     GpSolidFill *brush;
+     GpBitmap *bitmap;
+@@ -7567,6 +7569,7 @@ static void test_antialiasing(void)
+     HENHMETAFILE emf;
+     HBITMAP ddb;
+     ARGB color;
++    GpPen *pen;
+     int i;
+ 
+     status = GdipCreateSolidFill(0xff000000, &brush);
+@@ -7600,6 +7603,58 @@ static void test_antialiasing(void)
+         winetest_pop_context();
+     }
+ 
++    for (i = 0; i < ARRAY_SIZE(widths); i++)
++    {
++        winetest_push_context("width %.1f", widths[i]);
++
++        status = GdipCreateBitmapFromScan0(8, 8, 0, PixelFormat32bppARGB, NULL, &bitmap);
++        expect(Ok, status);
++        status = GdipGetImageGraphicsContext((GpImage *)bitmap, &graphics);
++        expect(Ok, status);
++        status = GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
++        expect(Ok, status);
++        status = GdipCreatePen1(0xff000000, widths[i], UnitPixel, &pen);
++        expect(Ok, status);
++
++        status = GdipDrawLine(graphics, pen, 0.0, 2.5, 8.0, 2.5);
++        expect(Ok, status);
++
++        status = GdipBitmapGetPixel(bitmap, 4, 2, &color);
++        expect(Ok, status);
++        ok(color == 0x80000000, "got %08lx above the line\n", color);
++        status = GdipBitmapGetPixel(bitmap, 4, 3, &color);
++        expect(Ok, status);
++        ok(color == 0x80000000, "got %08lx below the line\n", color);
++
++        GdipDeletePen(pen);
++        GdipDeleteGraphics(graphics);
++        GdipDisposeImage((GpImage *)bitmap);
++        winetest_pop_context();
++    }
++
++    status = GdipCreateBitmapFromScan0(32, 32, 0, PixelFormat32bppARGB, NULL, &bitmap);
++    expect(Ok, status);
++    status = GdipGetImageGraphicsContext((GpImage *)bitmap, &graphics);
++    expect(Ok, status);
++    status = GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
++    expect(Ok, status);
++    status = GdipCreatePen1(0xff000000, 1.0, UnitPixel, &pen);
++    expect(Ok, status);
++
++    status = GdipDrawLines(graphics, pen, join, ARRAY_SIZE(join));
++    expect(Ok, status);
++
++    status = GdipBitmapGetPixel(bitmap, 16, 27, &color);
++    expect(Ok, status);
++    ok(color == 0xff000000, "got %08lx at the join\n", color);
++    status = GdipBitmapGetPixel(bitmap, 16, 30, &color);
++    expect(Ok, status);
++    ok(!color, "got %08lx below the join\n", color);
++
++    GdipDeletePen(pen);
++    GdipDeleteGraphics(graphics);
++    GdipDisposeImage((GpImage *)bitmap);
++
+     screen = GetDC(NULL);
+     hdc = CreateCompatibleDC(screen);
+     ddb = CreateCompatibleBitmap(screen, 8, 8);
+@@ -7613,10 +7668,17 @@ static void test_antialiasing(void)
+ 
+     status = GdipFillRectangle(graphics, (GpBrush *)brush, 1.0, 0.0, 3.0, 4.0);
+     expect(Ok, status);
++    status = GdipCreatePen1(0xff000000, 1.0, UnitPixel, &pen);
++    expect(Ok, status);
++    status = GdipDrawLine(graphics, pen, 0.0, 6.5, 8.0, 6.5);
++    expect(Ok, status);
++    GdipDeletePen(pen);
+     GdipDeleteGraphics(graphics);
+ 
+     color = GetPixel(hdc, 1, 2);
+     ok(color != 0xffffff && color, "got %06lx at the edge on a DDB\n", color);
++    color = GetPixel(hdc, 4, 6);
++    ok(color != 0xffffff && color, "got %06lx at the line on a DDB\n", color);
+ 
+     DeleteDC(hdc);
+     DeleteObject(ddb);
