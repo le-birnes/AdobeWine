@@ -70,3 +70,4 @@ to WineHQ; help with that is very welcome.
 | 0061 | d2d1 | Insert triangulation segments iteratively and give up when they do not converge (After Effects' Render Queue panel overflowed the stack) | AdobeWine |
 | 0062 | server | Read and write process memory through a live thread id (winedbg on processes whose main thread exited) | AdobeWine |
 | 0063 | dwrite | No FreeType auto-hinting, unhinted glyph run outlines as on Windows | nvb-uy |
+| 0064 | dwrite | Quarter-pixel glyph positions in natural modes instead of truncated ones (uneven letter spacing) | nvb-uy |
