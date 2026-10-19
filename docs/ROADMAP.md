@@ -84,6 +84,9 @@ Dates after M2 depend on what the checklists show.
 4. **Creative Cloud life cycle:** the hang after it updates itself, the close button.
 5. **Memory:** Illustrator on 16 GB machines.
 6. ~~**HiDPI** scaling by default~~ done: `adobewine setup` follows the desktop's scale.
+7. **Pen pressure** under XWayland: an opt-in `adobewine tablet [--remove]` that installs
+   WineTab's wintab32 next to Photoshop, with a pressure curve (`XWINTAB_PRESSURE_GAMMA`).
+   Proposed and tested by NickPittas in [#13](../../../issues/13); Illustrator to check too.
 
 **Always**
 - Re-run the checklists after each Adobe update; a drop counts as a serious bug.
