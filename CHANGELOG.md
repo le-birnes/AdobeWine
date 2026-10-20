@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Creative Cloud's self-update to 6.11 no longer takes the whole desktop session down: a helper
+  started without a desktop made Wine start explorer after explorer (250 in a second) until X ran
+  out of clients and memory and swap filled (patch 0072). New `tools/sandbox.sh` runs a command
+  in a memory-capped systemd scope and kills it if it runs away.
 - Photoshop rendering and speed on Wayland/NVIDIA, by nvb-uy (#12): text without FreeType
   auto-hinting and with quarter-pixel glyph positions like on Windows, no colour fringes next to
   Direct2D text (`config/fonts.conf`), multisampled and analytic antialiasing in Direct2D,

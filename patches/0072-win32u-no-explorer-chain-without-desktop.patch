@@ -1,0 +1,52 @@
+win32u: Don't start another explorer from an explorer that has no desktop window.
+
+A process that comes up without a desktop (Creative Cloud 6.11's self-update runs
+ADSCustomHook.exe that way) makes get_desktop_window start explorer.exe /desktop. That
+explorer ends up without a desktop window too, and the next time it asks for one it starts
+another explorer. Updating Creative Cloud started 250 explorers within a second; X ran out of
+clients, then memory and swap filled until systemd-oomd killed the whole session. Fall back to
+the server's desktop window in explorer instead, as is done for services.
+
+diff --git a/dlls/win32u/winstation.c b/dlls/win32u/winstation.c
+index 3c55a80..337d721 100644
+--- a/dlls/win32u/winstation.c
++++ b/dlls/win32u/winstation.c
+@@ -802,6 +802,17 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
+ static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
+ #endif
+ 
++/* the desktop explorer reaching get_desktop_window without a window means its desktop failed;
++ * starting another explorer would only fail the same way, again and again */
++static BOOL is_explorer_process(void)
++{
++    static const WCHAR explorerW[] = {'\\','e','x','p','l','o','r','e','r','.','e','x','e',0};
++    const UNICODE_STRING *image = &NtCurrentTeb()->Peb->ProcessParameters->ImagePathName;
++    int len = ARRAY_SIZE(explorerW) - 1, count = image->Length / sizeof(WCHAR);
++
++    return count >= len && !wcsnicmp( image->Buffer + count - len, explorerW, len );
++}
++
+ HWND get_desktop_window(void)
+ {
+     struct user_thread_info *thread_info = get_user_thread_info();
+@@ -858,6 +869,12 @@ HWND get_desktop_window(void)
+         }
+         SERVER_END_REQ;
+ 
++        if (is_explorer_process())
++        {
++            ERR_(win)( "no desktop window for %s in explorer, not starting another one\n", debugstr_w(desktop) );
++            goto force;
++        }
++
+         params.Flags           = PROCESS_PARAMS_FLAG_NORMALIZED;
+         params.Environment     = peb->ProcessParameters->Environment;
+         params.EnvironmentSize = peb->ProcessParameters->EnvironmentSize;
+@@ -900,6 +917,7 @@ HWND get_desktop_window(void)
+         }
+         else ERR_(win)( "failed to start explorer %x\n", status );
+ 
++    force:
+         SERVER_START_REQ( get_desktop_window )
+         {
+             req->force = 1;
