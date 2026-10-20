@@ -14,8 +14,11 @@
   in a memory-capped systemd scope and kills it if it runs away, or when X connections near
   XWayland's limit.
 - Creative Cloud's update helpers get a desktop (patch 0073) and, running with a restricted token,
-  can read the display configuration again (patch 0074; before, they saw a 1024x768 screen). The
-  6.11 self-update still stops while its helper enumerates the GPUs; finishing it is being worked on.
+  can read the display configuration again (patch 0074; before, they saw a 1024x768 screen).
+  Helpers that reach Wine's window code before user32 sets it up no longer hang on their first
+  window or lose the display configuration (patch 0077); the step that swaps the updated files in
+  now finishes. The 6.11 self-update still stops at "Installing VCRedist" (the Visual C++ installer
+  it starts fails to load its language file; run on its own it installs fine).
 - Photoshop rendering and speed on Wayland/NVIDIA, by nvb-uy (#12): text without FreeType
   auto-hinting and with quarter-pixel glyph positions like on Windows, no colour fringes next to
   Direct2D text (`config/fonts.conf`), multisampled and analytic antialiasing in Direct2D,

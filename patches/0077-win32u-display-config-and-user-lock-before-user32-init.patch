@@ -1,0 +1,142 @@
+win32u: Set up the user lock and the hardware profile key on first use.
+
+Some of Creative Cloud 6.11's self-update helpers (AdobeIPCBroker.exe, ADSCustomHook.exe) reach
+win32u before user32 has initialized it: user_mutex was still uninitialized, so the first
+NtUserCreateWindowEx (an HWND_MESSAGE window) hung on a futex, and config_key was still NULL, so
+the display config couldn't be read. Initialize the mutex with pthread_once from user_lock and
+open the hardware profile key lazily. With this ADSCustomHook finishes ("Successfully executed").
+
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -50,6 +50,16 @@
+ static const char config_keyA[] = "\\Registry\\Machine\\System\\CurrentControlSet\\Hardware Profiles\\Current";
+ static const char directx_keyA[] = "\\Registry\\Machine\\Software\\Microsoft\\DirectX";
+ 
++/* the hardware profile key, opened on first use: processes that reach the display code before
++ * user32 initializes (sysparams_init) need it too; a process with a restricted token can't create
++ * keys under HKLM, it can still read them */
++static HKEY hw_profile_key(void)
++{
++    if (!config_key && !(config_key = reg_create_ascii_key( NULL, config_keyA, 0, NULL )))
++        config_key = reg_open_ascii_key( NULL, config_keyA );
++    return config_key;
++}
++
+ static const char devpropkey_gpu_uuidA[] = "Properties\\{233A9EF3-AFC4-4ABD-B564-C32F21F1535C}\\0002";
+ static const char devpropkey_gpu_luidA[] = "Properties\\{60B193CB-5276-4D0F-96FC-F173ABAD3EC6}\\0002";
+ static const char devpkey_device_driver_date[] = "Properties\\{A8B865DD-2E3D-4094-AD97-E593A70C75D6}\\0002";
+@@ -301,6 +311,7 @@
+ static pthread_mutex_t display_dc_lock = PTHREAD_MUTEX_INITIALIZER;
+ 
+ static pthread_mutex_t user_mutex;
++static pthread_once_t user_mutex_once = PTHREAD_ONCE_INIT;
+ static unsigned int user_lock_thread, user_lock_rec;
+ 
+ static UINT gcd( UINT a, UINT b )
+@@ -331,8 +342,20 @@
+     return x.num * y.den <= y.num * x.den ? x : y;
+ }
+ 
++/* initialized on first use: processes can get here before user32 initializes (sysparams_init) */
++static void init_user_mutex(void)
++{
++    pthread_mutexattr_t attr;
++
++    pthread_mutexattr_init( &attr );
++    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
++    pthread_mutex_init( &user_mutex, &attr );
++    pthread_mutexattr_destroy( &attr );
++}
++
+ void user_lock(void)
+ {
++    pthread_once( &user_mutex_once, init_user_mutex );
+     pthread_mutex_lock( &user_mutex );
+     if (!user_lock_rec++) user_lock_thread = GetCurrentThreadId();
+ }
+@@ -550,7 +573,7 @@
+ 
+     mutex = get_display_device_init_mutex();
+ 
+-    if (!(hkey = reg_open_ascii_key( config_key, source->path ))) ret = FALSE;
++    if (!(hkey = reg_open_ascii_key( hw_profile_key(), source->path ))) ret = FALSE;
+     else
+     {
+         ret = read_source_mode( hkey, ENUM_REGISTRY_SETTINGS, mode );
+@@ -569,7 +592,7 @@
+ 
+     mutex = get_display_device_init_mutex();
+ 
+-    if (!(hkey = reg_open_ascii_key( config_key, source->path ))) ret = FALSE;
++    if (!(hkey = reg_open_ascii_key( hw_profile_key(), source->path ))) ret = FALSE;
+     else
+     {
+         ret = write_source_mode( hkey, ENUM_REGISTRY_SETTINGS, mode );
+@@ -595,7 +618,7 @@
+ 
+     mutex = get_display_device_init_mutex();
+ 
+-    if (!(hkey = reg_open_ascii_key( config_key, source->path ))) ret = FALSE;
++    if (!(hkey = reg_open_ascii_key( hw_profile_key(), source->path ))) ret = FALSE;
+     else
+     {
+         ret = write_source_mode( hkey, ENUM_CURRENT_SETTINGS, mode );
+@@ -701,7 +724,7 @@
+     size = sizeof("\\Registry\\Machine");
+     if (value->DataLength / sizeof(WCHAR) <= size) return FALSE;
+     for (i = 0; i < value->DataLength / sizeof(WCHAR) - size; i++) source->path[i] = value_str[size + i];
+-    if (!(hkey = reg_open_ascii_key( config_key, source->path ))) return FALSE;
++    if (!(hkey = reg_open_ascii_key( hw_profile_key(), source->path ))) return FALSE;
+ 
+     /* StateFlags */
+     if (query_reg_ascii_value( hkey, "StateFlags", value, sizeof(buffer) ) && value->Type == REG_DWORD)
+@@ -1871,8 +1894,8 @@
+     set_reg_value( source->key, dpiW, REG_DWORD, &source->dpi, sizeof(source->dpi) );
+ 
+     snprintf( buffer, sizeof(buffer), "System\\CurrentControlSet\\Control\\Video\\%s\\%04x", gpu->guid, source_index );
+-    hkey = reg_create_ascii_key( config_key, buffer, REG_OPTION_VOLATILE | REG_OPTION_CREATE_LINK, NULL );
+-    if (!hkey) hkey = reg_create_ascii_key( config_key, buffer, REG_OPTION_VOLATILE | REG_OPTION_OPEN_LINK, NULL );
++    hkey = reg_create_ascii_key( hw_profile_key(), buffer, REG_OPTION_VOLATILE | REG_OPTION_CREATE_LINK, NULL );
++    if (!hkey) hkey = reg_create_ascii_key( hw_profile_key(), buffer, REG_OPTION_VOLATILE | REG_OPTION_OPEN_LINK, NULL );
+ 
+     len = asciiz_to_unicode( bufferW, source->path ) - sizeof(WCHAR);
+     set_reg_value( hkey, symbolic_link_valueW, REG_LINK, bufferW, len );
+@@ -2638,7 +2661,7 @@
+         }
+ 
+         list_add_tail( &sources, &source->entry );
+-        if (!(hkey = reg_open_ascii_key( config_key, source->path ))) continue;
++        if (!(hkey = reg_open_ascii_key( hw_profile_key(), source->path ))) continue;
+ 
+         for (monitor_id = 0;; monitor_id++)
+         {
+@@ -5979,17 +6002,13 @@
+     char *app_compat_flags = NULL;
+     DWORD i, dispos, dpi_scaling;
+     WCHAR layout[KL_NAMELENGTH];
+-    pthread_mutexattr_t attr;
+     HKEY hkey, appkey = 0;
+     DWORD len;
+ 
+     static const WCHAR oneW[] = {'1',0};
+     static const WCHAR x11driverW[] = {'\\','X','1','1',' ','D','r','i','v','e','r',0};
+ 
+-    pthread_mutexattr_init( &attr );
+-    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
+-    pthread_mutex_init( &user_mutex, &attr );
+-    pthread_mutexattr_destroy( &attr );
++    pthread_once( &user_mutex_once, init_user_mutex );
+ 
+     init_default_gamma_ramp();
+ 
+@@ -6014,9 +6033,7 @@
+ 
+     NtClose( hkey );
+ 
+-    /* a process with a restricted token can't create keys under HKLM, it can still read them */
+-    if (!(config_key = reg_create_ascii_key( NULL, config_keyA, 0, NULL )))
+-        config_key = reg_open_ascii_key( NULL, config_keyA );
++    hw_profile_key();
+ 
+     get_dword_entry( (union sysparam_all_entry *)&entry_LOGPIXELS, 0, &system_dpi, 0 );
+     if (!system_dpi)  /* check fallback key */
