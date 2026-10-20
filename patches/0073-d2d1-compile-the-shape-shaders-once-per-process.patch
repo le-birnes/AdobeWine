@@ -1,0 +1,105 @@
+From: Cikappa2904 <49496033+Cikappa2904@users.noreply.github.com>
+Subject: [PATCH] d2d1: Compile the shape shaders once per process.
+
+d2d_device_init compiles the eight shape shaders with D3DCompile for every device, and every
+HWND, DC and WIC bitmap render target creates its own device. Premiere Pro creates render
+targets while it redraws its UI, so dragging a clip in the timeline recompiled the same
+shaders over and over: in a 30 s perf profile its UI thread spent 71% of its time in
+d3dcompiler_47 (the native one winetricks installs). Windows ships these shaders precompiled.
+
+Compile the shaders on first use and give every device a reference to the same blobs. In the
+same Premiere test the UI thread's CPU time went from 20.3 s to 10.5 s, and d3dcompiler_47 went
+from 71% to 1.3% of it.
+---
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -5294,40 +5294,72 @@ struct d2d_device *unsafe_impl_from_ID2D1Device(ID2D1Device1 *iface)
+     return CONTAINING_RECORD(iface, struct d2d_device, ID2D1Device6_iface);
+ }
+ 
+-HRESULT d2d_device_init(struct d2d_device *device, ID2D1Factory1 *factory, IDXGIDevice *dxgi_device,
+-    bool allow_get_dxgi_device)
++/* Every device needs the same shape shaders, and render targets each create their own device;
++ * compile them once per process instead of on every render target. */
++static SRWLOCK shape_shaders_lock = SRWLOCK_INIT;
++static ID3D10Blob *shape_vs_blobs[ARRAY_SIZE(shape_info)], *shape_ps_blob;
++
++static HRESULT d2d_compile_shape_shaders(void)
+ {
+-    HRESULT hr;
+     ID3D10Blob *compiled;
+-
+-    device->ID2D1Device6_iface.lpVtbl = &d2d_device_vtbl;
+-    device->refcount = 1;
+-    device->factory = factory;
+-    ID2D1Factory1_AddRef(device->factory);
+-    device->dxgi_device = dxgi_device;
+-    IDXGIDevice_AddRef(device->dxgi_device);
+-    device->allow_get_dxgi_device = allow_get_dxgi_device;
++    HRESULT hr;
+ 
+     for (unsigned int i = 0; i < ARRAY_SIZE(shape_info); ++i)
+     {
+         const struct shape_info *si = &shape_info[i];
+ 
++        if (shape_vs_blobs[i])
++            continue;
+         if (FAILED(hr = D3DCompile(si->vs_code, si->vs_code_size, si->name, NULL, NULL,
+                 "main", "vs_4_0", 0, 0, &compiled, NULL)))
+         {
+             WARN("Failed to compile shader for shape type %#x, hr %#lx.\n", si->shape_type, hr);
+             return hr;
+         }
+-        device->precompiled_shape_vs[i] = compiled;
++        shape_vs_blobs[i] = compiled;
+     }
+ 
+-    if (FAILED(hr = D3DCompile(shape_ps_code, sizeof(shape_ps_code) - 1, "ps", NULL, NULL,
+-            "main", "ps_4_0", 0, 0, &compiled, NULL)))
++    if (!shape_ps_blob)
+     {
+-        WARN("Failed to compile the pixel shader, hr %#lx.\n", hr);
++        if (FAILED(hr = D3DCompile(shape_ps_code, sizeof(shape_ps_code) - 1, "ps", NULL, NULL,
++                "main", "ps_4_0", 0, 0, &compiled, NULL)))
++        {
++            WARN("Failed to compile the pixel shader, hr %#lx.\n", hr);
++            return hr;
++        }
++        shape_ps_blob = compiled;
++    }
++
++    return S_OK;
++}
++
++HRESULT d2d_device_init(struct d2d_device *device, ID2D1Factory1 *factory, IDXGIDevice *dxgi_device,
++    bool allow_get_dxgi_device)
++{
++    HRESULT hr;
++
++    device->ID2D1Device6_iface.lpVtbl = &d2d_device_vtbl;
++    device->refcount = 1;
++    device->factory = factory;
++    ID2D1Factory1_AddRef(device->factory);
++    device->dxgi_device = dxgi_device;
++    IDXGIDevice_AddRef(device->dxgi_device);
++    device->allow_get_dxgi_device = allow_get_dxgi_device;
++
++    AcquireSRWLockExclusive(&shape_shaders_lock);
++    if (FAILED(hr = d2d_compile_shape_shaders()))
++    {
++        ReleaseSRWLockExclusive(&shape_shaders_lock);
+         return hr;
+     }
+-    device->precompiled_shape_ps = compiled;
++    for (unsigned int i = 0; i < ARRAY_SIZE(shape_info); ++i)
++    {
++        ID3D10Blob_AddRef(shape_vs_blobs[i]);
++        device->precompiled_shape_vs[i] = shape_vs_blobs[i];
++    }
++    ID3D10Blob_AddRef(shape_ps_blob);
++    device->precompiled_shape_ps = shape_ps_blob;
++    ReleaseSRWLockExclusive(&shape_shaders_lock);
+ 
+     return S_OK;
+ }

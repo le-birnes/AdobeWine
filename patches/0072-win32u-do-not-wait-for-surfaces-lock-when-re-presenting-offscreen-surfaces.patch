@@ -1,0 +1,77 @@
+From: Cikappa2904 <49496033+Cikappa2904@users.noreply.github.com>
+Subject: [PATCH] win32u: Do not wait for surfaces_lock when re-presenting offscreen surfaces.
+
+Patch 0019 re-presents the offscreen client surfaces of a toplevel after a flush of its window
+surface. That flush also runs from update_surface_region, under the user lock, so
+present_offscreen_client_surfaces takes surfaces_lock after the user lock. client_surface_present
+takes them the other way round: surfaces_lock, then the user lock in NtUserGetDCEx and
+NtUserReleaseDC. Premiere deadlocked within minutes of dragging clips in the timeline: the UI
+thread in NtUserSetWindowPos waited for surfaces_lock, and dxvk-submit in vkQueuePresentKHR
+waited for the user lock.
+
+Only try surfaces_lock in present_offscreen_client_surfaces, and present all surfaces under that
+one lock, so the thread that may hold the user lock never waits for surfaces_lock.
+---
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -431,12 +431,11 @@ void client_surface_release( struct client_surface *surface )
+     pthread_mutex_unlock( &surfaces_lock );
+ }
+ 
+-void client_surface_present( struct client_surface *surface )
++static void client_surface_present_locked( struct client_surface *surface )
+ {
+     HDC hdc = 0;
+     HWND hwnd;
+ 
+-    pthread_mutex_lock( &surfaces_lock );
+     if ((hwnd = surface->hwnd))
+     {
+         client_surface_update_locked( surface );
+@@ -446,6 +445,12 @@ void client_surface_present( struct client_surface *surface )
+         surface->funcs->present( surface, hdc );
+         if (hdc) NtUserReleaseDC( hwnd, hdc );
+     }
++}
++
++void client_surface_present( struct client_surface *surface )
++{
++    pthread_mutex_lock( &surfaces_lock );
++    client_surface_present_locked( surface );
+     pthread_mutex_unlock( &surfaces_lock );
+ }
+ 
+@@ -464,22 +469,24 @@ void present_offscreen_client_surfaces( HWND toplevel )
+     if (disabled) return;
+     if (InterlockedCompareExchange( &presenting, 1, 0 )) return;
+ 
+-    pthread_mutex_lock( &surfaces_lock );
++    /* The caller can hold the user lock (window_surface_flush from update_surface_region),
++     * while a present takes surfaces_lock and then the user lock for the DC: waiting for
++     * surfaces_lock here deadlocks against it. Skip the re-copy when a present holds the
++     * lock; the next present of each surface copies it again. */
++    if (pthread_mutex_trylock( &surfaces_lock ))
++    {
++        InterlockedExchange( &presenting, 0 );
++        return;
++    }
+     LIST_FOR_EACH_ENTRY( surface, &client_surfaces, struct client_surface, entry )
+     {
+         if (!surface->hwnd || !surface->offscreen || surface->toplevel != toplevel) continue;
+         if (count == ARRAY_SIZE(surfaces)) break;
+-        InterlockedIncrement( &surface->ref );
+         surfaces[count++] = surface;
+     }
++    for (i = 0; i < count; i++) client_surface_present_locked( surfaces[i] );
+     pthread_mutex_unlock( &surfaces_lock );
+ 
+-    for (i = 0; i < count; i++)
+-    {
+-        client_surface_present( surfaces[i] );
+-        client_surface_release( surfaces[i] );
+-    }
+-
+     InterlockedExchange( &presenting, 0 );
+ }
+ 
