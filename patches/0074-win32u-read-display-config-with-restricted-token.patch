@@ -1,0 +1,24 @@
+win32u: Open the hardware profile key for reading when it can't be created.
+
+sysparams_init creates HKLM\System\CurrentControlSet\Hardware Profiles\Current, which needs
+write access. Creative Cloud's helpers that run with a restricted token (ADSCustomHook.exe,
+which switches the files over during a self-update, and AdobeIPCBroker.exe started by CoreSync)
+can't create it, so config_key stayed NULL, no display source could be read back and the display
+config looked unreadable ("Failed to read display config"): the process saw a 1024x768 default
+screen and rebuilt the display devices on every call. Open the existing key instead.
+
+diff --git a/dlls/win32u/sysparams.c b/dlls/win32u/sysparams.c
+index 6bfefaa..faf87de 100644
+--- a/dlls/win32u/sysparams.c
++++ b/dlls/win32u/sysparams.c
+@@ -6014,7 +6014,9 @@ void sysparams_init(void)
+ 
+     NtClose( hkey );
+ 
+-    config_key = reg_create_ascii_key( NULL, config_keyA, 0, NULL );
++    /* a process with a restricted token can't create keys under HKLM, it can still read them */
++    if (!(config_key = reg_create_ascii_key( NULL, config_keyA, 0, NULL )))
++        config_key = reg_open_ascii_key( NULL, config_keyA );
+ 
+     get_dword_entry( (union sysparam_all_entry *)&entry_LOGPIXELS, 0, &system_dpi, 0 );
+     if (!system_dpi)  /* check fallback key */

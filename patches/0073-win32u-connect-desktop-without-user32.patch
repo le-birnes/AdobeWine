@@ -1,0 +1,23 @@
+win32u: Connect to the default desktop in get_desktop_window when the process has none yet.
+
+winstation_init only runs when user32 initializes. A process that reaches get_desktop_window
+without loading user32 first (Creative Cloud's ADSCustomHook.exe, which switches the installed
+files over during a self-update) has no thread desktop, so it started explorers that ended up
+without a desktop too (see 0072) and never got a desktop window. Connect the thread to its window
+station and default desktop first, as user32 would have. With this the hook gets a desktop and
+starts no explorer.
+
+diff --git a/dlls/win32u/winstation.c b/dlls/win32u/winstation.c
+index 337d721..8df8839 100644
+--- a/dlls/win32u/winstation.c
++++ b/dlls/win32u/winstation.c
+@@ -820,6 +820,9 @@ HWND get_desktop_window(void)
+ 
+     if (thread_info->top_window) return thread_info->top_window;
+ 
++    /* a process that never loaded user32 (only gdi32 or the display code) isn't connected to a desktop yet */
++    if (!NtUserGetThreadDesktop( GetCurrentThreadId() )) winstation_init();
++
+     /* don't create an actual explorer desktop window for services */
+     is_service = is_service_process();
+ 
