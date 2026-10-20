@@ -17,8 +17,10 @@
   can read the display configuration again (patch 0074; before, they saw a 1024x768 screen).
   Helpers that reach Wine's window code before user32 sets it up no longer hang on their first
   window or lose the display configuration (patch 0077); the step that swaps the updated files in
-  now finishes. The 6.11 self-update still stops at "Installing VCRedist" (the Visual C++ installer
-  it starts fails to load its language file; run on its own it installs fine).
+  now finishes, and the 6.11 self-update completes on its own. One case is still open: when the
+  update has to install a newer Visual C++ runtime itself, that installer fails to load its language
+  file (run on its own it installs fine), so install the runtime first if an update stops at
+  "Installing VCRedist".
 - Photoshop rendering and speed on Wayland/NVIDIA, by nvb-uy (#12): text without FreeType
   auto-hinting and with quarter-pixel glyph positions like on Windows, no colour fringes next to
   Direct2D text (`config/fonts.conf`), multisampled and analytic antialiasing in Direct2D,
