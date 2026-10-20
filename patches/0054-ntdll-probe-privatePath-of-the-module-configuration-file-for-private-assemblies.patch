@@ -1,0 +1,168 @@
+ntdll: Probe the <probing privatePath> of a module's configuration file for private assemblies.
+Reads <module>.config (manifest resource 1) or <module>.<id>.config when building the
+module's activation context and looks in <appdir>\<dir>\ and <appdir>\<dir>\<name>\ after the
+usual places. After Effects' Mocha AE plug-in loads its Qt6 DLLs this way.
+
+diff --git a/dlls/ntdll/actctx.c b/dlls/ntdll/actctx.c
+index 03a4dfc..53dfac0 100644
+--- a/dlls/ntdll/actctx.c
++++ b/dlls/ntdll/actctx.c
+@@ -568,6 +568,7 @@ typedef struct _ACTIVATION_CONTEXT
+     LONG                ref_count;
+     struct file_info    config;
+     struct file_info    appdir;
++    WCHAR              *private_path;  /* <probing privatePath> of the configuration file */
+     struct assembly    *assemblies;
+     unsigned int        num_assemblies;
+     unsigned int        allocated_assemblies;
+@@ -1120,6 +1121,7 @@ static void actctx_release( ACTIVATION_CONTEXT *actctx )
+         }
+         RtlFreeHeap( GetProcessHeap(), 0, actctx->config.info );
+         RtlFreeHeap( GetProcessHeap(), 0, actctx->appdir.info );
++        RtlFreeHeap( GetProcessHeap(), 0, actctx->private_path );
+         RtlFreeHeap( GetProcessHeap(), 0, actctx->assemblies );
+         RtlFreeHeap( GetProcessHeap(), 0, actctx->dllredirect_section );
+         RtlFreeHeap( GetProcessHeap(), 0, actctx->wndclass_section );
+@@ -3370,6 +3372,42 @@ done:
+     return status;
+ }
+ 
++/* Lookup in <appdir>\<dir>\ and <appdir>\<dir>\name\ for each <dir> of the
++ * configuration file's <probing privatePath="dir1;dir2"/>. */
++static NTSTATUS lookup_private_path( struct actctx_loader *acl, struct assembly_identity *ai,
++                                     const WCHAR *lang, const WCHAR *directory )
++{
++    const WCHAR *appdir = acl->actctx->appdir.info, *dir, *end;
++    NTSTATUS status = STATUS_SXS_ASSEMBLY_NOT_FOUND;
++    DWORD total, len;
++    WCHAR *buffer, *p;
++
++    total = wcslen( appdir ) + wcslen( acl->actctx->private_path ) + 2 * wcslen( ai->name ) + wcslen( lang ) + 14;
++    if (!(buffer = RtlAllocateHeap( GetProcessHeap(), 0, total * sizeof(WCHAR) ))) return STATUS_NO_MEMORY;
++
++    for (dir = acl->actctx->private_path; *dir; dir = *end ? end + 1 : end)
++    {
++        if (!(end = wcschr( dir, ';' ))) end = dir + wcslen( dir );
++        if (end == dir) continue;
++        wcscpy( buffer, appdir );
++        p = buffer + wcslen( buffer );
++        len = end - dir;
++        memcpy( p, dir, len * sizeof(WCHAR) );
++        p += len;
++        *p++ = '\\';
++        *p = 0;
++        TRACE( "probing private path %s\n", debugstr_w(buffer) );
++        status = open_manifest_file( acl, ai, lang, directory, buffer, total );
++        if (status != STATUS_SXS_ASSEMBLY_NOT_FOUND) break;
++
++        swprintf( p, total - (p - buffer), L"%s\\", ai->name );
++        status = open_manifest_file( acl, ai, lang, directory, buffer, total );
++        if (status != STATUS_SXS_ASSEMBLY_NOT_FOUND) break;
++    }
++    RtlFreeHeap( GetProcessHeap(), 0, buffer );
++    return status;
++}
++
+ static NTSTATUS lookup_assembly(struct actctx_loader* acl,
+                                 struct assembly_identity* ai)
+ {
+@@ -3426,6 +3464,9 @@ static NTSTATUS lookup_assembly(struct actctx_loader* acl,
+         status = open_manifest_file( acl, ai, lang, directory, buffer, total );
+     }
+ 
++    if (status == STATUS_SXS_ASSEMBLY_NOT_FOUND && acl->actctx->private_path)
++        status = lookup_private_path( acl, ai, lang, directory );
++
+ done:
+     RtlFreeHeap( GetProcessHeap(), 0, directory );
+     RtlFreeHeap( GetProcessHeap(), 0, buffer );
+@@ -5289,6 +5330,80 @@ void actctx_init(void)
+  *
+  * FIXME: function signature/prototype is wrong
+  */
++/* The application configuration file of a manifest resource: <module>.config for resource 1,
++ * <module>.<id>.config for the others (e.g. foo.dll.2.config). Only its
++ * <probing privatePath="..."/> is used, to find private assemblies in subdirectories. */
++static void load_config_file( ACTIVATION_CONTEXT *actctx, const ACTCTXW *pActCtx )
++{
++    ULONG_PTR id = (ULONG_PTR)pActCtx->lpResourceName;
++    UNICODE_STRING module, nameW;
++    IO_STATUS_BLOCK io;
++    WCHAR *path, *text = NULL, *p, *end;
++    char *data = NULL;
++    ULONG size;
++    HANDLE file;
++
++    if (id >> 16) return;
++    if (pActCtx->dwFlags & ACTCTX_FLAG_HMODULE_VALID)
++    {
++        if (get_module_filename( pActCtx->hModule, &module, 0 )) return;
++    }
++    else if (pActCtx->lpSource && RtlDetermineDosPathNameType_U( pActCtx->lpSource ) != RtlPathTypeRelative)
++    {
++        if (!(module.Buffer = strdupW( pActCtx->lpSource ))) return;
++    }
++    else return;
++
++    size = wcslen( module.Buffer ) + 20;
++    if (!(path = RtlAllocateHeap( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) goto done;
++    if (id == 1) swprintf( path, size, L"%s.config", module.Buffer );
++    else swprintf( path, size, L"%s.%u.config", module.Buffer, (unsigned int)id );
++
++    if (!RtlDosPathNameToNtPathName_U( path, &nameW, NULL, NULL )) goto done;
++    if (open_nt_file( &file, &nameW ))
++    {
++        RtlFreeUnicodeString( &nameW );
++        goto done;
++    }
++    RtlFreeUnicodeString( &nameW );
++    TRACE( "configuration file %s\n", debugstr_w(path) );
++    actctx->config.type = ACTIVATION_CONTEXT_PATH_TYPE_WIN32_FILE;
++    actctx->config.info = path;
++    path = NULL;
++
++    size = 65536;
++    if ((data = RtlAllocateHeap( GetProcessHeap(), 0, size )) &&
++        !NtReadFile( file, 0, NULL, NULL, &io, data, size, NULL, NULL ) &&
++        !RtlUTF8ToUnicodeN( NULL, 0, &size, data, io.Information ) &&
++        (text = RtlAllocateHeap( GetProcessHeap(), 0, size + sizeof(WCHAR) )))
++    {
++        RtlUTF8ToUnicodeN( text, size, &size, data, io.Information );
++        text[size / sizeof(WCHAR)] = 0;
++        if ((p = wcsstr( text, L"<probing" )) && (p = wcsstr( p, L"privatePath" )))
++        {
++            p += wcslen( L"privatePath" );
++            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
++            if (*p++ == '=')
++            {
++                while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
++                if ((*p == '"' || *p == '\'') && (end = wcschr( p + 1, *p )))
++                {
++                    *end = 0;
++                    actctx->private_path = strdupW( p + 1 );
++                    TRACE( "privatePath %s\n", debugstr_w(actctx->private_path) );
++                }
++            }
++        }
++    }
++    NtClose( file );
++
++done:
++    RtlFreeHeap( GetProcessHeap(), 0, text );
++    RtlFreeHeap( GetProcessHeap(), 0, data );
++    RtlFreeHeap( GetProcessHeap(), 0, path );
++    RtlFreeHeap( GetProcessHeap(), 0, module.Buffer );
++}
++
+ NTSTATUS WINAPI RtlCreateActivationContext( ACTIVATION_CONTEXT **new_actctx, const void *ptr )
+ {
+     const ACTCTXW *pActCtx = ptr;  /* FIXME: not the right structure */
+@@ -5422,6 +5537,8 @@ NTSTATUS WINAPI RtlCreateActivationContext( ACTIVATION_CONTEXT **new_actctx, con
+     if (file) NtClose( file );
+     RtlFreeUnicodeString( &nameW );
+ 
++    if (status == STATUS_SUCCESS && (pActCtx->dwFlags & ACTCTX_FLAG_RESOURCE_NAME_VALID))
++        load_config_file( actctx, pActCtx );
+     if (status == STATUS_SUCCESS) status = parse_depend_manifests(&acl);
+     free_depend_manifests( &acl );
+ 
