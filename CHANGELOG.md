@@ -8,7 +8,7 @@
   antialiased GDI+ paths and lines (Wine MR 12221 by Thomas Ritter), offscreen swapchains paced
   to the display refresh rate, and AdobeNotificationHelper no longer aborts (patches 0063-0071).
 - After Effects loads the Mocha AE plug-in (patch 0054, private assemblies through a `.config`
-  file's privatePath). It was in the dev tree since 0.1.0 but had been left out of the public
+  file's privatePath). It was written right after 0.1.0 but had been left out of the public
   patch set by mistake.
 
 ## 0.2.2 - 2026-10-11
