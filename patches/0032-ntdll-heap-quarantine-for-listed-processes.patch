@@ -1,5 +1,5 @@
 diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
-index 9165c67..c677aa6 100644
+index 1f9dea9..2ff51c2 100644
 --- a/dlls/ntdll/heap.c
 +++ b/dlls/ntdll/heap.c
 @@ -317,7 +317,8 @@ C_ASSERT( offsetof(struct heap, subheap) <= REGION_ALIGN - 1 );
@@ -81,7 +81,7 @@ index 9165c67..c677aa6 100644
  static BOOL release_empty_subheaps(void)
  {
      static int release = -1;
-@@ -1624,7 +1675,8 @@ static void heap_set_debug_flags( HANDLE handle )
+@@ -1683,7 +1734,8 @@ static void heap_set_debug_flags( HANDLE handle )
      }
  
      if ((heap->flags & HEAP_GROWABLE) && !heap->pending_free &&

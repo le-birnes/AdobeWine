@@ -7,6 +7,9 @@
   Direct2D text (`config/fonts.conf`), multisampled and analytic antialiasing in Direct2D,
   antialiased GDI+ paths and lines (Wine MR 12221 by Thomas Ritter), offscreen swapchains paced
   to the display refresh rate, and AdobeNotificationHelper no longer aborts (patches 0063-0071).
+- Heap patch 0027 revised: emptied heap segments are still kept mapped for apps that touch freed
+  memory, but are no longer reused, so allocations are placed as in stock Wine (Wine's kernel32 heap
+  test had 4 failures on 32-bit). New test tests/heap/keep.c.
 - After Effects loads the Mocha AE plug-in (patch 0054, private assemblies through a `.config`
   file's privatePath). It was written right after 0.1.0 but had been left out of the public
   patch set by mistake.

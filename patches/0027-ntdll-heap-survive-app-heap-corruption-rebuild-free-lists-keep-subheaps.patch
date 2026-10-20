@@ -1,8 +1,8 @@
 diff --git a/dlls/ntdll/heap.c b/dlls/ntdll/heap.c
-index 75a0daa..9165c67 100644
+index 75a0daa..1f9dea9 100644
 --- a/dlls/ntdll/heap.c
 +++ b/dlls/ntdll/heap.c
-@@ -907,6 +907,22 @@ static struct block *heap_delay_free( struct heap *heap, ULONG flags, struct blo
+@@ -907,6 +907,74 @@ static struct block *heap_delay_free( struct heap *heap, ULONG flags, struct blo
  }
  
  
@@ -22,24 +22,90 @@ index 75a0daa..9165c67 100644
 +    return release;
 +}
 +
++/* Emptied subheaps that are kept mapped, oldest first, for all heaps of the process. They are
++ * off their heap's subheap and free lists, so the heap never allocates from them again and
++ * allocations are placed exactly as when the subheap is released; only the address range
++ * stays reserved. The oldest ones are released once they reserve more than this: */
++#define HEAP_MAX_KEPT_SIZE (sizeof(void *) == 8 ? 0x10000000 : 0x4000000)
++
++static struct list kept_subheaps = LIST_INIT( kept_subheaps );
++static SIZE_T kept_subheaps_size;
++static RTL_SRWLOCK kept_subheaps_lock = RTL_SRWLOCK_INIT;
++
++static void release_subheap( SUBHEAP *subheap )
++{
++    void *addr = subheap_base( subheap );
++    SIZE_T size = 0;
++
++    NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );
++}
++
++static void keep_empty_subheap( SUBHEAP *subheap )
++{
++    SUBHEAP *oldest;
++
++    RtlAcquireSRWLockExclusive( &kept_subheaps_lock );
++    list_add_tail( &kept_subheaps, &subheap->entry );
++    kept_subheaps_size += subheap_size( subheap );
++    while (kept_subheaps_size > HEAP_MAX_KEPT_SIZE)
++    {
++        oldest = LIST_ENTRY( list_head( &kept_subheaps ), SUBHEAP, entry );
++        if (oldest == subheap) break;
++        list_remove( &oldest->entry );
++        kept_subheaps_size -= subheap_size( oldest );
++        release_subheap( oldest );
++    }
++    RtlReleaseSRWLockExclusive( &kept_subheaps_lock );
++}
++
++/* release the kept subheaps of a heap that is destroyed */
++static void release_kept_subheaps( struct heap *heap )
++{
++    SUBHEAP *subheap, *next;
++
++    RtlAcquireSRWLockExclusive( &kept_subheaps_lock );
++    LIST_FOR_EACH_ENTRY_SAFE( subheap, next, &kept_subheaps, SUBHEAP, entry )
++    {
++        if (subheap->user_value != heap) continue;
++        list_remove( &subheap->entry );
++        kept_subheaps_size -= subheap_size( subheap );
++        release_subheap( subheap );
++    }
++    RtlReleaseSRWLockExclusive( &kept_subheaps_lock );
++}
++
  static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *block )
  {
      SUBHEAP *subheap = block_get_subheap( heap, block );
-@@ -932,7 +948,12 @@ static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *b
-         block = &entry->block;
-     }
- 
--    if (block == first_block( subheap ) && !next && subheap != &heap->subheap)
-+    /* Empty subheaps are kept (decommitted below) rather than released: apps that free a
-+     * pointer twice, which Windows tolerates since it rarely releases heap segments, would
-+     * otherwise touch unmapped memory or a reused range and corrupt the heap. With the range
-+     * still mapped, the second free is caught as an invalid block. Set
-+     * WINE_HEAP_RELEASE_SUBHEAPS=1 for the old behaviour. */
-+    if (block == first_block( subheap ) && !next && subheap != &heap->subheap && release_empty_subheaps())
+@@ -935,11 +1003,23 @@ static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *b
+     if (block == first_block( subheap ) && !next && subheap != &heap->subheap)
      {
          /* free the subheap if it's empty and not the main one */
-         void *addr = subheap_base( subheap );
-@@ -1132,34 +1153,107 @@ static SUBHEAP *free_block_get_subheap( const struct heap *heap, const struct bl
+-        void *addr = subheap_base( subheap );
+-        SIZE_T size = 0;
+-
+         list_remove( &subheap->entry );
+-        NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );
++        if (release_empty_subheaps())
++        {
++            release_subheap( subheap );
++            return STATUS_SUCCESS;
++        }
++
++        /* Empty subheaps are kept mapped (and decommitted) rather than released: apps that
++         * free a pointer twice or touch freed memory, which Windows tolerates since it rarely
++         * releases heap segments, would otherwise touch unmapped memory or a reused range and
++         * corrupt the heap. With the range still mapped, the second free is caught as an
++         * invalid block. The subheap is not reused, so the block layout of later allocations
++         * is the same as with the subheap released. Set WINE_HEAP_RELEASE_SUBHEAPS=1 for the
++         * old behaviour. */
++        block_init_free( block, flags, subheap, block_size );
++        subheap_decommit( heap, subheap, (char *)((struct entry *)block + 1) + REGION_ALIGN );
++        keep_empty_subheap( subheap );
+         return STATUS_SUCCESS;
+     }
+ 
+@@ -1132,34 +1212,107 @@ static SUBHEAP *free_block_get_subheap( const struct heap *heap, const struct bl
      return subheap;
  }
  
@@ -58,12 +124,12 @@ index 75a0daa..9165c67 100644
  
 -    /* Find a suitable free list, and in it find a block large enough */
 +    ERR( "heap %p: free lists corrupted (use after free in the app?), rebuilding them\n", heap );
-+
+ 
+-    while ((ptr = list_next( &heap->free_lists[0].entry, ptr )))
 +    list_init( &heap->free_lists[0].entry );
 +    for (i = 1, entry = heap->free_lists + 1; i < FREE_LIST_COUNT; i++, entry++)
 +        list_add_after( &entry[-1].entry, &entry->entry );
- 
--    while ((ptr = list_next( &heap->free_lists[0].entry, ptr )))
++
 +    LIST_FOR_EACH_ENTRY( subheap, &heap->subheap_list, SUBHEAP, entry )
      {
 -        entry = LIST_ENTRY( ptr, struct entry, entry );
@@ -71,7 +137,8 @@ index 75a0daa..9165c67 100644
 -        if (block_get_flags( block ) == BLOCK_FLAG_FREE_LINK) continue;
 -        if (block_get_size( block ) >= block_size)
 +        __TRY
-+        {
+         {
+-            if (!(subheap = free_block_get_subheap( heap, block )))
 +            const char *base = subheap_base( subheap ), *end = base + subheap_size( subheap );
 +            struct block *block = first_block( subheap ), *next;
 +
@@ -90,8 +157,7 @@ index 75a0daa..9165c67 100644
 +            }
 +        }
 +        __EXCEPT_PAGE_FAULT
-         {
--            if (!(subheap = free_block_get_subheap( heap, block )))
++        {
 +            WARN( "heap %p: subheap %p has broken block headers\n", heap, subheap );
 +        }
 +        __ENDTRY
@@ -161,7 +227,15 @@ index 75a0daa..9165c67 100644
  
      /* make sure we can fit the block and a free entry at the end */
      total_size = sizeof(SUBHEAP) + block_size + sizeof(struct entry);
-@@ -2081,6 +2175,60 @@ void heap_thread_detach(void)
+@@ -1707,6 +1860,7 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE handle )
+         addr = arena;
+         NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );
+     }
++    release_kept_subheaps( heap );
+     LIST_FOR_EACH_ENTRY_SAFE( subheap, next, &heap->subheap_list, SUBHEAP, entry )
+     {
+         if (subheap == &heap->subheap) continue;  /* do this one last */
+@@ -2081,6 +2235,60 @@ void heap_thread_detach(void)
  /***********************************************************************
   *           RtlAllocateHeap   (NTDLL.@)
   */
@@ -222,7 +296,7 @@ index 75a0daa..9165c67 100644
  void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE_T size )
  {
      struct heap *heap;
-@@ -2099,7 +2247,7 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE
+@@ -2099,7 +2307,7 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE
      else
      {
          heap_lock( heap, heap_flags );
@@ -231,7 +305,7 @@ index 75a0daa..9165c67 100644
          heap_unlock( heap, heap_flags );
  
          if (!status && heap->bins)
-@@ -2147,7 +2295,7 @@ BOOLEAN WINAPI DECLSPEC_HOTPATCH RtlFreeHeap( HANDLE handle, ULONG flags, void *
+@@ -2147,7 +2355,7 @@ BOOLEAN WINAPI DECLSPEC_HOTPATCH RtlFreeHeap( HANDLE handle, ULONG flags, void *
          SIZE_T block_size = block_get_size( block ), bin = BLOCK_SIZE_BIN( block_size );
  
          heap_lock( heap, heap_flags );
