@@ -1,0 +1,598 @@
+winex11, win32u, server: Pen tablets under XWayland: wintab packets and Windows Ink pen pointers.
+
+Under XWayland the XInput1 device events wintab selected almost never arrive (WineHQ bug 53052):
+a whole stroke gave one packet, no pressure. Pens now come from XInput2 raw events of the tablet
+devices (floating slave pointers with an "Abs Pressure" axis), selected on the root window once
+per process and again when devices are added; raw events don't take the core events away from
+the windows, so the pen keeps moving the mouse.
+
+wintab: each axis is passed as 0..1 of its XInput2 range and mapped to the XInput1 range wintab
+reports (XWayland's XInput2 x/y range is 16 times larger). The packets go to the context owner
+under the cursor (raw events have no window), and a WT_PROXIMITY is sent when the pen's events
+start again, since XInput1 proximity events don't come either. The pressure axis has no unit
+(TU_NONE, resolution 0, like the Wacom driver): Illustrator turned TU_INCHES with a resolution of 1
+into zero pressure.
+
+Windows Ink: the process owning the window under the cursor sends WM_POINTERDOWN/UPDATE/UP
+hardware input with WINE_POINTER_MESSAGE_FLAG_PEN and the pressure and tilt in the high 32 bits of
+lparam; wineserver queues them with an IMDT_PEN source, without the mouse messages it synthesizes
+for touch (the pen moves the mouse itself) and without repeating them. win32u keeps the pen data
+of the pointer, strips it from wparam, and returns it from GetPointerPenInfo and friends.
+
+Tested with tools/pen.py (a uinput stylus): Photoshop and Illustrator (wintab) and After Effects
+(Windows Ink) draw strokes whose width follows the pressure; InDesign and Premiere Pro get the
+pen as a pen pointer. wine/tests/pen/inkprobe.c logs what an Ink application reads.
+
+diff --git a/dlls/win32u/input.c b/dlls/win32u/input.c
+index c24bbab..a3cb8f5 100644
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -417,6 +417,7 @@ struct pointer
+     struct list entry;
+     POINTER_INPUT_TYPE type;
+     POINTER_INFO info;
++    UINT pen_data;  /* WINE_PEN_* data of a pen pointer */
+ };
+ 
+ BOOL grab_pointer = TRUE;
+@@ -3068,6 +3069,7 @@ void update_pointer_from_msg( POINTER_INPUT_TYPE type, const MSG *msg )
+     pointer->info = info;
+     pointer->info.pointerType = pointer->type;
+     pointer->info.ButtonChangeType = buttons;
++    if (type == PT_PEN) pointer->pen_data = (UINT64)msg->wParam >> 32;
+ }
+ 
+ static POINTER_INPUT_TYPE pointer_type_from_hw( const struct hw_msg_source *source )
+@@ -3090,6 +3092,7 @@ static POINTER_INPUT_TYPE pointer_type_from_hw( const struct hw_msg_source *sour
+ BOOL process_pointer_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
+ {
+     update_pointer_from_msg( pointer_type_from_hw( &msg_data->source ), msg );
++    msg->wParam = (UINT)msg->wParam;  /* pen data, see WINE_POINTER_MESSAGE_FLAG_PEN */
+     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
+     return TRUE;
+ }
+@@ -3164,13 +3167,27 @@ BOOL WINAPI NtUserGetPointerInfoList( UINT32 id, POINTER_INPUT_TYPE type, UINT_P
+         return FALSE;
+     }
+ 
+-    if (type != PT_POINTER) FIXME( "Pointer type %#x not implemented\n", type );
++    if (type != PT_POINTER && !(type == PT_PEN && pointer->type == PT_PEN))
++        FIXME( "Pointer type %#x not implemented\n", type );
+ 
+     *entry_count = 1;
+     *pointer_count = 1;
+ 
+     memset( pointer_info, 0, size );
+     *(POINTER_INFO *)pointer_info = pointer->info;
++    if (type == PT_PEN && pointer->type == PT_PEN)
++    {
++        POINTER_PEN_INFO *pen = pointer_info;
++        UINT data = pointer->pen_data;
++
++        pen->penMask  = PEN_MASK_PRESSURE | PEN_MASK_TILT_X | PEN_MASK_TILT_Y;
++        pen->pressure = data & WINE_PEN_PRESSURE_MASK;
++        pen->tiltX    = (int)((data >> WINE_PEN_TILTX_SHIFT) & 0xff) - 90;
++        pen->tiltY    = (int)((data >> WINE_PEN_TILTY_SHIFT) & 0xff) - 90;
++        if (data & WINE_PEN_BARREL) pen->penFlags |= PEN_FLAG_BARREL;
++        if (data & WINE_PEN_ERASER) pen->penFlags |= PEN_FLAG_ERASER | PEN_FLAG_INVERTED;
++        TRACE( "pen pressure %u tilt %d,%d flags %#x\n", pen->pressure, pen->tiltX, pen->tiltY, pen->penFlags );
++    }
+     return TRUE;
+ }
+ 
+diff --git a/dlls/winex11.drv/mouse.c b/dlls/winex11.drv/mouse.c
+index cb79ed5..cae3366 100644
+--- a/dlls/winex11.drv/mouse.c
++++ b/dlls/winex11.drv/mouse.c
+@@ -352,6 +352,207 @@ void x11drv_xinput2_enable( Display *display, Window window )
+ }
+ 
+ 
++static struct
++{
++    int deviceid;
++    BOOL is_tablet;          /* (floating) slave pointer with a pressure axis */
++    BOOL eraser;
++    double min[5], max[5];
++    double value[5];         /* last raw value of each axis */
++    unsigned int buttons;
++} tablet_ranges[32];
++
++/* find or add the state of a device; ranges and kind are queried the first time */
++static int query_tablet_ranges( Display *display, int deviceid )
++{
++    XIDeviceInfo *info;
++    int i, j, count, slot = -1;
++
++    for (i = 0; i < ARRAY_SIZE(tablet_ranges); i++)
++    {
++        if (tablet_ranges[i].deviceid == deviceid) return i;
++        if (slot < 0 && !tablet_ranges[i].deviceid) slot = i;
++    }
++    if (slot < 0 || !(info = pXIQueryDevice( display, deviceid, &count ))) return -1;
++
++    tablet_ranges[slot].deviceid = deviceid;
++    for (i = 0; i < info->num_classes; i++)
++    {
++        XIValuatorClassInfo *valuator = (XIValuatorClassInfo *)info->classes[i];
++        char *label;
++
++        if (info->classes[i]->type != XIValuatorClass) continue;
++        if ((j = valuator->number) >= ARRAY_SIZE(tablet_ranges[slot].min)) continue;
++        tablet_ranges[slot].min[j] = valuator->min;
++        tablet_ranges[slot].max[j] = valuator->max;
++        if (j == 2 && (info->use == XISlavePointer || info->use == XIFloatingSlave) && valuator->label &&
++            (label = XGetAtomName( display, valuator->label )))
++        {
++            tablet_ranges[slot].is_tablet = strstr( label, "Pressure" ) != NULL;
++            XFree( label );
++        }
++        TRACE( "device %d axis %d range %f-%f\n", deviceid, j, valuator->min, valuator->max );
++    }
++    tablet_ranges[slot].eraser = info->name && strstr( info->name, "eraser" );
++    TRACE( "device %d %s: tablet %d eraser %d\n", deviceid, debugstr_a(info->name),
++           tablet_ranges[slot].is_tablet, tablet_ranges[slot].eraser );
++    pXIFreeDeviceInfo( info );
++    return slot;
++}
++
++/* select raw events of the pen devices on the root window, so pen input reaches applications
++ * as pointer messages (Windows Ink) whether or not they use wintab; rescanned when devices change */
++static Display *tablet_display;
++
++static void select_tablet_raw_events( Display *display )
++{
++    static LONG selected;
++    unsigned char mask_bits[XIMaskLen(XI_LASTEVENT)], hier_bits[XIMaskLen(XI_LASTEVENT)];
++    XIEventMask mask, hier;
++    XIDeviceInfo *info;
++    int i, count, slot;
++
++    if (!InterlockedExchange( &selected, 1 ))
++    {
++        tablet_display = display;
++        hier.mask     = hier_bits;
++        hier.mask_len = sizeof(hier_bits);
++        hier.deviceid = XIAllDevices;
++        memset( hier_bits, 0, sizeof(hier_bits) );
++        XISetMask( hier_bits, XI_HierarchyChanged );
++        pXISelectEvents( display, DefaultRootWindow( display ), &hier, 1 );
++    }
++    if (display != tablet_display) return;
++    if (!(info = pXIQueryDevice( display, XIAllDevices, &count ))) return;
++
++    for (i = 0; i < count; i++)
++    {
++        if (info[i].use != XISlavePointer && info[i].use != XIFloatingSlave) continue;
++        if ((slot = query_tablet_ranges( display, info[i].deviceid )) < 0 || !tablet_ranges[slot].is_tablet) continue;
++
++        mask.mask     = mask_bits;
++        mask.mask_len = sizeof(mask_bits);
++        mask.deviceid = info[i].deviceid;
++        memset( mask_bits, 0, sizeof(mask_bits) );
++        XISetMask( mask_bits, XI_RawMotion );
++        XISetMask( mask_bits, XI_RawButtonPress );
++        XISetMask( mask_bits, XI_RawButtonRelease );
++        pXISelectEvents( display, DefaultRootWindow( display ), &mask, 1 );
++    }
++    pXIFreeDeviceInfo( info );
++}
++
++/* send pen pointer messages for the window under the cursor if this process owns it; a window
++ * that got the pen down keeps it until the pen is lifted (pointer capture) */
++static void send_pen_pointer( int slot, unsigned int prev_buttons )
++{
++    static const UINT32 pen_id = 0x10;
++    static HWND contact_hwnd;
++    INPUT input = {.type = INPUT_HARDWARE};
++    double *value = tablet_ranges[slot].value, *min = tablet_ranges[slot].min, *max = tablet_ranges[slot].max;
++    BOOL contact = tablet_ranges[slot].buttons & 1, pressed = contact && !(prev_buttons & 1);
++    UINT64 data;
++    DWORD pid = 0;
++    POINT pt;
++    HWND hwnd;
++    int i, n[5];
++
++    for (i = 0; i < 5; i++)
++        n[i] = max[i] > min[i] ? (value[i] - min[i]) * 65535 / (max[i] - min[i]) : 0;
++
++    if (!(hwnd = contact_hwnd))
++    {
++        /* a stroke that started over another process's window belongs to it */
++        if (contact && !pressed) return;
++        if (!NtUserGetCursorPos( &pt ) || !(hwnd = NtUserWindowFromPoint( pt.x, pt.y ))) return;
++        NtUserGetWindowThread( hwnd, &pid );
++        if (pid != GetCurrentProcessId()) return;
++    }
++
++    input.hi.uMsg = contact ? (contact_hwnd ? WM_POINTERUPDATE : WM_POINTERDOWN)
++                            : (contact_hwnd ? WM_POINTERUP : WM_POINTERUPDATE);
++    input.hi.wParamL = pen_id;
++    input.hi.wParamH = POINTER_MESSAGE_FLAG_INRANGE | WINE_POINTER_MESSAGE_FLAG_PEN;
++    if (contact) input.hi.wParamH |= POINTER_MESSAGE_FLAG_INCONTACT | POINTER_MESSAGE_FLAG_FIRSTBUTTON;
++    if (contact && !contact_hwnd) input.hi.wParamH |= POINTER_MESSAGE_FLAG_NEW;
++    if (tablet_ranges[slot].buttons & 2) input.hi.wParamH |= POINTER_MESSAGE_FLAG_SECONDBUTTON;
++    contact_hwnd = contact ? hwnd : 0;
++
++    data = (UINT64)n[2] * 1024 / 65535;
++    data |= (UINT64)(min( max( (int)value[3], -90 ), 90 ) + 90) << WINE_PEN_TILTX_SHIFT;
++    data |= (UINT64)(min( max( (int)value[4], -90 ), 90 ) + 90) << WINE_PEN_TILTY_SHIFT;
++    if (tablet_ranges[slot].buttons & 2) data |= WINE_PEN_BARREL;
++    if (tablet_ranges[slot].eraser) data |= WINE_PEN_ERASER;
++
++    TRACE( "pen %#x hwnd %p pos %d,%d pressure %u\n", input.hi.uMsg, hwnd, n[0], n[1],
++           (UINT)(data & WINE_PEN_PRESSURE_MASK) );
++    NtUserSendHardwareInput( hwnd, 0, &input, MAKELPARAM( n[0], n[1] ) | (LPARAM)(data << 32) );
++}
++
++/***********************************************************************
++ *              x11drv_xinput2_select_tablet
++ *
++ * For wintab: make sure the raw events of a tablet device reach this process (see
++ * select_tablet_raw_events). Under XWayland the XInput1 device events wintab used to
++ * select almost never arrive.
++ */
++BOOL x11drv_xinput2_select_tablet( Display *display, Window window, int deviceid )
++{
++    int slot;
++
++    if (!xinput2_available) return FALSE;
++    if ((slot = query_tablet_ranges( display, deviceid )) < 0 || !tablet_ranges[slot].is_tablet) return FALSE;
++    if (!tablet_display) select_tablet_raw_events( display );
++    return TRUE;
++}
++
++/***********************************************************************
++ *              X11DRV_TabletRawEvent
++ *
++ * Raw motion or button event of a tablet selected by x11drv_xinput2_select_tablet.
++ */
++static BOOL X11DRV_TabletRawEvent( XGenericEventCookie *xev )
++{
++    struct x11drv_thread_data *data = x11drv_thread_data();
++    XIRawEvent *event = xev->data;
++    double axes[5] = {0};
++    unsigned int i, axes_mask = 0, prev_buttons;
++    const double *value = event->valuators.values;
++    int slot;
++
++    if (!data || event->deviceid == data->xinput2_pointer) return FALSE;
++    if ((slot = query_tablet_ranges( data->display, event->deviceid )) < 0) return FALSE;
++    if (!tablet_ranges[slot].is_tablet) return FALSE;
++
++    /* pass each axis as 0..1 of its XInput2 range, wintab maps it to the range it reports */
++    for (i = 0; i < event->valuators.mask_len * 8; i++)
++    {
++        double min, max;
++
++        if (!XIMaskIsSet( event->valuators.mask, i )) continue;
++        if (i < ARRAY_SIZE(axes))
++        {
++            min = tablet_ranges[slot].min[i];
++            max = tablet_ranges[slot].max[i];
++            tablet_ranges[slot].value[i] = *value;
++            axes[i] = max > min ? (*value - min) / (max - min) : 0.0;
++            axes_mask |= 1 << i;
++        }
++        value++;
++    }
++    /* XI2 button i is wintab button i - 1 */
++    prev_buttons = tablet_ranges[slot].buttons;
++    if (event->detail >= 1 && event->detail <= 32)
++    {
++        if (event->evtype == XI_RawButtonPress) tablet_ranges[slot].buttons |= 1 << (event->detail - 1);
++        if (event->evtype == XI_RawButtonRelease) tablet_ranges[slot].buttons &= ~(1 << (event->detail - 1));
++    }
++
++    x11drv_tablet_event( 0, event->deviceid, tablet_ranges[slot].buttons, event->time, axes, axes_mask );
++    send_pen_pointer( slot, prev_buttons );
++    return TRUE;
++}
++
+ /***********************************************************************
+  *              x11drv_xinput2_disable
+  */
+@@ -412,6 +613,7 @@ void x11drv_xinput2_init( struct x11drv_thread_data *data )
+         pXIFreeDeviceInfo( pointer_info );
+     }
+ 
++    select_tablet_raw_events( data->display );
+     TRACE( "XInput2 %d.%d available\n", major, minor );
+ }
+ 
+@@ -429,6 +631,11 @@ void x11drv_xinput2_disable( Display *display, Window window )
+ {
+ }
+ 
++BOOL x11drv_xinput2_select_tablet( Display *display, Window window, int deviceid )
++{
++    return FALSE;
++}
++
+ void x11drv_xinput2_init( struct x11drv_thread_data *data )
+ {
+ }
+@@ -1905,12 +2112,17 @@ BOOL X11DRV_GenericEvent( HWND hwnd, XEvent *xev )
+     case XI_DeviceChanged:
+         ret = X11DRV_DeviceChanged( event );
+         break;
++    case XI_HierarchyChanged:
++        select_tablet_raw_events( event->display );
++        break;
+     case XI_RawMotion:
+-        ret = X11DRV_RawMotion( event );
++        if (X11DRV_TabletRawEvent( event )) ret = TRUE;
++        else if (XIMaskIsSet( x11drv_thread_data()->root_mask, XI_RawMotion )) ret = X11DRV_RawMotion( event );
+         break;
+     case XI_RawButtonPress:
+     case XI_RawButtonRelease:
+-        ret = X11DRV_RawButtonEvent( event );
++        if (X11DRV_TabletRawEvent( event )) ret = TRUE;
++        else if (XIMaskIsSet( x11drv_thread_data()->root_mask, event->evtype )) ret = X11DRV_RawButtonEvent( event );
+         break;
+     case XI_TouchBegin:
+     case XI_TouchUpdate:
+diff --git a/dlls/winex11.drv/wintab.c b/dlls/winex11.drv/wintab.c
+index 3dfbb52..f750368 100644
+--- a/dlls/winex11.drv/wintab.c
++++ b/dlls/winex11.drv/wintab.c
+@@ -695,9 +695,9 @@ static BOOL load_tablet_info( HWND hwnd )
+                                 /* Axis 3 is Normal Pressure */
+                                 gSysDevice.NPRESSURE.axMin = Axis->min_value;
+                                 gSysDevice.NPRESSURE.axMax= Axis->max_value;
+-                                gSysDevice.NPRESSURE.axUnits = TU_INCHES;
+-                                gSysDevice.NPRESSURE.axResolution =
+-                                                        Axis->resolution;
++                                /* pressure has no unit (the Wacom driver reports TU_NONE, 0) */
++                                gSysDevice.NPRESSURE.axUnits = TU_NONE;
++                                gSysDevice.NPRESSURE.axResolution = 0;
+                                 Axis++;
+                             }
+                             if (Val->num_axes >= 5)
+@@ -951,6 +951,107 @@ static BOOL button_event( HWND hwnd, XEvent *event )
+     return TRUE;
+ }
+ 
++/* windows that opened a tablet context, to route XInput2 raw events (which have no window) */
++static HWND attached_owners[16];
++
++static void add_attached_owner( HWND owner )
++{
++    int i, free_slot = -1;
++
++    for (i = 0; i < ARRAY_SIZE(attached_owners); i++)
++    {
++        if (attached_owners[i] == owner) return;
++        if (free_slot < 0 && (!attached_owners[i] || !NtUserIsWindow( attached_owners[i] ))) free_slot = i;
++    }
++    if (free_slot >= 0) attached_owners[free_slot] = owner;
++}
++
++/* the context owner the cursor is over, like the X window of an XInput1 event */
++static HWND owner_from_cursor(void)
++{
++    POINT pt;
++    HWND hwnd = 0;
++    int i;
++
++    if (NtUserGetCursorPos( &pt )) hwnd = NtUserWindowFromPoint( pt.x, pt.y );
++    for (; hwnd; hwnd = NtUserGetAncestor( hwnd, GA_PARENT ))
++        for (i = 0; i < ARRAY_SIZE(attached_owners); i++)
++            if (attached_owners[i] == hwnd) return hwnd;
++    return NtUserGetForegroundWindow();
++}
++
++/* XInput1 axis ranges per cursor, the scale of the packets wintab reports */
++static struct { int min, max; } cursor_axes[CURSORMAX][5];
++
++static void save_cursor_axes( int curnum, XDeviceInfo *device )
++{
++    XAnyClassPtr any = device->inputclassinfo;
++    int i, j;
++
++    for (i = 0; i < device->num_classes; i++)
++    {
++        if (any->class == ValuatorClass)
++        {
++            XValuatorInfoPtr val = (XValuatorInfoPtr)any;
++            for (j = 0; j < val->num_axes && j < ARRAY_SIZE(cursor_axes[curnum]); j++)
++            {
++                cursor_axes[curnum][j].min = val->axes[j].min_value;
++                cursor_axes[curnum][j].max = val->axes[j].max_value;
++            }
++        }
++        any = (XAnyClassPtr)((char *)any + any->length);
++    }
++}
++
++/* XInput2 raw motion or button event of a tablet device (see x11drv_xinput2_select_tablet),
++ * each axis as 0..1 of its range */
++BOOL x11drv_tablet_event( HWND hwnd, int deviceid, unsigned int buttons, Time time,
++                          const double *axes, unsigned int axes_mask )
++{
++    static double last_axes[5];
++    static Time last_time;
++    LPWTI_CURSORS_INFO cursor;
++    int i, curnum;
++
++    if (!hwndTabletDefault || (curnum = cursor_from_device( deviceid, &cursor )) < 0) return FALSE;
++    if (!hwnd) hwnd = owner_from_cursor();
++
++    /* XInput1 proximity events hardly arrive under XWayland: tell the app the pen came in
++     * when its events start again after a pause */
++    if (!last_time || time - last_time > 500)
++    {
++        TRACE( "proximity in\n" );
++        send_message( hwndTabletDefault, WT_PROXIMITY, (WPARAM)hwnd, MAKELPARAM( 1, 1 ) );
++    }
++    last_time = time;
++
++    for (i = 0; i < ARRAY_SIZE(last_axes); i++)
++        if (axes_mask & (1 << i))
++            last_axes[i] = cursor_axes[curnum][i].min + axes[i] * (cursor_axes[curnum][i].max - cursor_axes[curnum][i].min);
++
++    memset( &gMsgPacket, 0, sizeof(WTPACKET) );
++    TRACE( "Received XInput2 tablet event (%p); device id %d, cursor num %d, buttons %#x, pressure %d\n",
++           hwnd, deviceid, curnum, buttons, (int)last_axes[2] );
++
++    /* Set cursor to inverted if cursor is the eraser */
++    gMsgPacket.pkStatus = (cursor->TYPE == CSR_TYPE_ERASER ? TPS_INVERT : 0);
++    gMsgPacket.pkTime = EVENT_x11_time_to_win32_time( time );
++    gMsgPacket.pkSerialNumber = gSerial++;
++    gMsgPacket.pkCursor = curnum;
++    gMsgPacket.pkX = last_axes[0];
++    gMsgPacket.pkY = last_axes[1];
++    gMsgPacket.pkOrientation.orAzimuth = figure_deg( last_axes[3], last_axes[4] );
++    gMsgPacket.pkOrientation.orAltitude = ((1000 - 15 * max( fabs( last_axes[3] ), fabs( last_axes[4] ) ))
++                                           * (gMsgPacket.pkStatus & TPS_INVERT ? -1 : 1));
++    gMsgPacket.pkNormalPressure = last_axes[2];
++    button_state[curnum] = buttons;
++    gMsgPacket.pkButtons = buttons;
++    gMsgPacket.pkChanged = get_changed_state( &gMsgPacket );
++    send_message( hwndTabletDefault, WT_PACKET, gMsgPacket.pkSerialNumber, (LPARAM)hwnd );
++    last_packet = gMsgPacket;
++    return TRUE;
++}
++
+ static BOOL key_event( HWND hwnd, XEvent *event )
+ {
+     if (event->type == key_press_type)
+@@ -1054,16 +1155,28 @@ static BOOL tablet_attach_queue( HWND owner )
+ 
+         if (the_device->num_classes > 0)
+         {
++            /* XInput2 delivers motion and buttons reliably (also under XWayland) */
++            BOOL xi2 = x11drv_xinput2_select_tablet( data->display, win, target->id );
++
++            if (xi2)
++            {
++                save_cursor_axes( cur_loop, target );
++                add_attached_owner( owner );
++            }
++
+             DeviceKeyPress(the_device, key_press_type, event_list[event_number]);
+             if (key_press_type) event_number++;
+             DeviceKeyRelease(the_device, key_release_type, event_list[event_number]);
+             if (key_release_type) event_number++;
+-            DeviceButtonPress(the_device, button_press_type, event_list[event_number]);
+-            if (button_press_type) event_number++;
+-            DeviceButtonRelease(the_device, button_release_type, event_list[event_number]);
+-            if (button_release_type) event_number++;
+-            DeviceMotionNotify(the_device, motion_type, event_list[event_number]);
+-            if (motion_type) event_number++;
++            if (!xi2)
++            {
++                DeviceButtonPress(the_device, button_press_type, event_list[event_number]);
++                if (button_press_type) event_number++;
++                DeviceButtonRelease(the_device, button_release_type, event_list[event_number]);
++                if (button_release_type) event_number++;
++                DeviceMotionNotify(the_device, motion_type, event_list[event_number]);
++                if (motion_type) event_number++;
++            }
+             ProximityIn(the_device, proximity_in_type, event_list[event_number]);
+             if (proximity_in_type) event_number++;
+             ProximityOut(the_device, proximity_out_type, event_list[event_number]);
+@@ -1557,6 +1670,12 @@ LRESULT X11DRV_WintabProc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, vo
+ 
+ #else /* SONAME_LIBXI */
+ 
++BOOL x11drv_tablet_event( HWND hwnd, int deviceid, unsigned int buttons, Time time,
++                          const double *axes, unsigned int axes_mask )
++{
++    return FALSE;
++}
++
+ /***********************************************************************
+  *           X11DRV_WintabProc
+  */
+diff --git a/dlls/winex11.drv/x11drv.h b/dlls/winex11.drv/x11drv.h
+index 22462df..b2d2147 100644
+--- a/dlls/winex11.drv/x11drv.h
++++ b/dlls/winex11.drv/x11drv.h
+@@ -623,6 +623,9 @@ extern void x11drv_xinput2_load(void);
+ extern void x11drv_xinput2_init( struct x11drv_thread_data *data );
+ extern void x11drv_xinput2_enable( Display *display, Window window );
+ extern void x11drv_xinput2_disable( Display *display, Window window );
++extern BOOL x11drv_xinput2_select_tablet( Display *display, Window window, int deviceid );
++extern BOOL x11drv_tablet_event( HWND hwnd, int deviceid, unsigned int buttons, Time time,
++                                 const double *axes, unsigned int axes_mask );
+ 
+ extern Bool (*pXGetEventData)( Display *display, XEvent /*XGenericEventCookie*/ *event );
+ extern void (*pXFreeEventData)( Display *display, XEvent /*XGenericEventCookie*/ *event );
+diff --git a/include/ntuser.h b/include/ntuser.h
+index be41b33..5a40190 100644
+--- a/include/ntuser.h
++++ b/include/ntuser.h
+@@ -394,6 +394,17 @@ C_ASSERT( sizeof(struct drag_drop_post_params) == offsetof(struct drag_drop_post
+ #define DF_WINE_ROOT_DESKTOP      0x40000000
+ #define DF_WINE_VIRTUAL_DESKTOP   0x80000000
+ 
++/* Wine-specific pen pointer input (WM_POINTER* hardware input from a pen tablet): the driver sets this
++ * flag in the high word of the input wparam and puts WINE_PEN_* data in the high 32 bits of lparam;
++ * wineserver queues the messages with an IMDT_PEN source and moves the data to the high 32 bits of
++ * the message wparam, from where win32u takes it before the application sees the message */
++#define WINE_POINTER_MESSAGE_FLAG_PEN 0x1000
++#define WINE_PEN_PRESSURE_MASK  0x000007ff  /* 0..1024 */
++#define WINE_PEN_TILTX_SHIFT    11          /* tilt + 90, 0..180 */
++#define WINE_PEN_TILTY_SHIFT    19
++#define WINE_PEN_BARREL         0x08000000
++#define WINE_PEN_ERASER         0x10000000
++
+ /* NtUserMessageCall codes */
+ enum
+ {
+diff --git a/server/queue.c b/server/queue.c
+index b1f367e..810c28a 100644
+--- a/server/queue.c
++++ b/server/queue.c
+@@ -2512,6 +2512,8 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
+     desktop_shm_t *desktop_shm = desktop->shared;
+     const union hw_input *input = &pointer->input;
+     unsigned int i, wparam = input->hw.wparam;
++    int pen = (wparam >> 16) & WINE_POINTER_MESSAGE_FLAG_PEN;
++    lparam_t pen_data = 0;
+     timeout_t time = get_tick_count();
+     user_handle_t win = pointer->win;
+     struct rectangle top_rect;
+@@ -2523,6 +2525,12 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
+     y = HIWORD(input->hw.lparam) * (top_rect.bottom - top_rect.top) / 65535;
+ 
+     if (pointer->primary) wparam |= POINTER_MESSAGE_FLAG_PRIMARY << 16;
++    if (pen)
++    {
++        source.origin = IMDT_PEN;
++        wparam &= ~(WINE_POINTER_MESSAGE_FLAG_PEN << 16);
++        pen_data = input->hw.lparam >> 32 << 32;
++    }
+ 
+     for (i = 0; i < 2 && messages[input->hw.msg - WM_POINTERUPDATE][i]; i++)
+     {
+@@ -2530,7 +2538,7 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
+ 
+         msg->win       = get_user_full_handle( win );
+         msg->msg       = messages[input->hw.msg - WM_POINTERUPDATE][i];
+-        msg->wparam    = wparam;
++        msg->wparam    = wparam | pen_data;
+         msg->lparam    = MAKELONG(x, y);
+         msg->x         = desktop_shm->cursor.x;
+         msg->y         = desktop_shm->cursor.y;
+@@ -2538,7 +2546,8 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
+         queue_hardware_message( desktop, msg, 1 );
+     }
+ 
+-    if (!repeated && pointer->primary && (msg = alloc_hardware_message( 0xff515700, source, time, 0 )))
++    /* the pen also moves the mouse through the driver's own pointer events */
++    if (!repeated && pointer->primary && !pen && (msg = alloc_hardware_message( 0xff515700, source, time, 0 )))
+     {
+         unsigned int message = WM_MOUSEMOVE;
+         if (input->hw.msg == WM_POINTERDOWN) message = WM_LBUTTONDOWN;
+@@ -2559,7 +2568,8 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
+     {
+         pointer->input.hw.msg = WM_POINTERUPDATE;
+         pointer->input.hw.wparam &= ~(POINTER_MESSAGE_FLAG_NEW << 16);
+-        pointer->timeout = add_timeout_user( -160000, pointer_message_timeout, pointer );
++        /* a pen reports every movement itself, also while hovering */
++        if (!pen) pointer->timeout = add_timeout_user( -160000, pointer_message_timeout, pointer );
+     }
+     else
+     {

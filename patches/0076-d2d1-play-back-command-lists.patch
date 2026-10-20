@@ -1,0 +1,317 @@
+d2d1: Play command lists back in DrawImage(), and let EndDraw() succeed on a command list target.
+
+After Effects draws its panels (Drawbot) into command lists and then draws those with DrawImage().
+EndDraw() on the command list target returned E_NOTIMPL, which After Effects reported as
+"Direct2D Drawbot error" on every redraw, and DrawImage() ignored command list images ("Unhandled
+image"). A small ID2D1CommandSink now replays a closed list through ID2D1CommandList_Stream() into
+the device context, with the recorded transforms applied on top of the current transform and
+target offset, clipped to image_rect, and the context's transform, antialias mode, primitive
+blend and unit mode restored afterwards. The After Effects panels draw again.
+
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+index 4a8014c..4a438c3 100644
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -2305,8 +2305,12 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_EndDraw(ID2D1DeviceContext6
+ 
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+     {
+-        FIXME("Unimplemented for command list target.\n");
+-        return E_NOTIMPL;
++        /* the commands are recorded as they are issued; the list is finished by Close() */
++        if (tag1)
++            *tag1 = context->error.tag1;
++        if (tag2)
++            *tag2 = context->error.tag2;
++        return context->error.code;
+     }
+ 
+     if (tag1)
+@@ -2946,11 +2950,273 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawGlyphRun
+     d2d_device_context_draw_glyph_run(context, baseline_origin, glyph_run, glyph_run_desc, brush, measuring_mode);
+ }
+ 
++/* Plays a closed command list back into a device context, for DrawImage() with a command list. */
++struct d2d_command_list_player
++{
++    ID2D1CommandSink ID2D1CommandSink_iface;
++    ID2D1DeviceContext *context;
++    D2D1_MATRIX_3X2_F base;
++};
++
++static inline struct d2d_command_list_player *impl_from_ID2D1CommandSink(ID2D1CommandSink *iface)
++{
++    return CONTAINING_RECORD(iface, struct d2d_command_list_player, ID2D1CommandSink_iface);
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_QueryInterface(ID2D1CommandSink *iface, REFIID iid, void **out)
++{
++    if (IsEqualGUID(iid, &IID_ID2D1CommandSink) || IsEqualGUID(iid, &IID_IUnknown))
++    {
++        ID2D1CommandSink_AddRef(*(ID2D1CommandSink **)out = iface);
++        return S_OK;
++    }
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG STDMETHODCALLTYPE d2d_player_AddRef(ID2D1CommandSink *iface) { return 2; }
++static ULONG STDMETHODCALLTYPE d2d_player_Release(ID2D1CommandSink *iface) { return 1; }
++static HRESULT STDMETHODCALLTYPE d2d_player_BeginDraw(ID2D1CommandSink *iface) { return S_OK; }
++static HRESULT STDMETHODCALLTYPE d2d_player_EndDraw(ID2D1CommandSink *iface) { return S_OK; }
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetAntialiasMode(ID2D1CommandSink *iface, D2D1_ANTIALIAS_MODE mode)
++{
++    ID2D1DeviceContext_SetAntialiasMode(impl_from_ID2D1CommandSink(iface)->context, mode);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetTags(ID2D1CommandSink *iface, D2D1_TAG tag1, D2D1_TAG tag2)
++{
++    ID2D1DeviceContext_SetTags(impl_from_ID2D1CommandSink(iface)->context, tag1, tag2);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetTextAntialiasMode(ID2D1CommandSink *iface, D2D1_TEXT_ANTIALIAS_MODE mode)
++{
++    ID2D1DeviceContext_SetTextAntialiasMode(impl_from_ID2D1CommandSink(iface)->context, mode);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetTextRenderingParams(ID2D1CommandSink *iface, IDWriteRenderingParams *params)
++{
++    ID2D1DeviceContext_SetTextRenderingParams(impl_from_ID2D1CommandSink(iface)->context, params);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetTransform(ID2D1CommandSink *iface, const D2D1_MATRIX_3X2_F *transform)
++{
++    struct d2d_command_list_player *player = impl_from_ID2D1CommandSink(iface);
++    D2D1_MATRIX_3X2_F m = *transform;
++
++    d2d_matrix_multiply(&m, &player->base);
++    ID2D1DeviceContext_SetTransform(player->context, &m);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetPrimitiveBlend(ID2D1CommandSink *iface, D2D1_PRIMITIVE_BLEND blend)
++{
++    ID2D1DeviceContext_SetPrimitiveBlend(impl_from_ID2D1CommandSink(iface)->context, blend);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_SetUnitMode(ID2D1CommandSink *iface, D2D1_UNIT_MODE mode)
++{
++    ID2D1DeviceContext_SetUnitMode(impl_from_ID2D1CommandSink(iface)->context, mode);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_Clear(ID2D1CommandSink *iface, const D2D1_COLOR_F *color)
++{
++    ID2D1DeviceContext_Clear(impl_from_ID2D1CommandSink(iface)->context, color);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawGlyphRun(ID2D1CommandSink *iface, D2D1_POINT_2F origin,
++        const DWRITE_GLYPH_RUN *run, const DWRITE_GLYPH_RUN_DESCRIPTION *desc, ID2D1Brush *brush,
++        DWRITE_MEASURING_MODE mode)
++{
++    ID2D1DeviceContext_DrawGlyphRun(impl_from_ID2D1CommandSink(iface)->context, origin, run, desc, brush, mode);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawLine(ID2D1CommandSink *iface, D2D1_POINT_2F p0, D2D1_POINT_2F p1,
++        ID2D1Brush *brush, float width, ID2D1StrokeStyle *style)
++{
++    ID2D1DeviceContext_DrawLine(impl_from_ID2D1CommandSink(iface)->context, p0, p1, brush, width, style);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawGeometry(ID2D1CommandSink *iface, ID2D1Geometry *geometry,
++        ID2D1Brush *brush, float width, ID2D1StrokeStyle *style)
++{
++    ID2D1DeviceContext_DrawGeometry(impl_from_ID2D1CommandSink(iface)->context, geometry, brush, width, style);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawRectangle(ID2D1CommandSink *iface, const D2D1_RECT_F *rect,
++        ID2D1Brush *brush, float width, ID2D1StrokeStyle *style)
++{
++    ID2D1DeviceContext_DrawRectangle(impl_from_ID2D1CommandSink(iface)->context, rect, brush, width, style);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawBitmap(ID2D1CommandSink *iface, ID2D1Bitmap *bitmap,
++        const D2D1_RECT_F *dst_rect, float opacity, D2D1_INTERPOLATION_MODE mode, const D2D1_RECT_F *src_rect,
++        const D2D1_MATRIX_4X4_F *perspective)
++{
++    ID2D1DeviceContext_DrawBitmap(impl_from_ID2D1CommandSink(iface)->context, bitmap, dst_rect, opacity, mode,
++            src_rect, perspective);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawImage(ID2D1CommandSink *iface, ID2D1Image *image,
++        const D2D1_POINT_2F *offset, const D2D1_RECT_F *rect, D2D1_INTERPOLATION_MODE mode,
++        D2D1_COMPOSITE_MODE composite)
++{
++    ID2D1DeviceContext_DrawImage(impl_from_ID2D1CommandSink(iface)->context, image, offset, rect, mode, composite);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_DrawGdiMetafile(ID2D1CommandSink *iface, ID2D1GdiMetafile *metafile,
++        const D2D1_POINT_2F *offset)
++{
++    ID2D1DeviceContext_DrawGdiMetafile(impl_from_ID2D1CommandSink(iface)->context, metafile, offset);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_FillMesh(ID2D1CommandSink *iface, ID2D1Mesh *mesh, ID2D1Brush *brush)
++{
++    ID2D1DeviceContext_FillMesh(impl_from_ID2D1CommandSink(iface)->context, mesh, brush);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_FillOpacityMask(ID2D1CommandSink *iface, ID2D1Bitmap *bitmap,
++        ID2D1Brush *brush, const D2D1_RECT_F *dst_rect, const D2D1_RECT_F *src_rect)
++{
++    ID2D1DeviceContext_FillOpacityMask(impl_from_ID2D1CommandSink(iface)->context, bitmap, brush, dst_rect, src_rect);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_FillGeometry(ID2D1CommandSink *iface, ID2D1Geometry *geometry,
++        ID2D1Brush *brush, ID2D1Brush *opacity_brush)
++{
++    ID2D1DeviceContext_FillGeometry(impl_from_ID2D1CommandSink(iface)->context, geometry, brush, opacity_brush);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_FillRectangle(ID2D1CommandSink *iface, const D2D1_RECT_F *rect,
++        ID2D1Brush *brush)
++{
++    ID2D1DeviceContext_FillRectangle(impl_from_ID2D1CommandSink(iface)->context, rect, brush);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_PushAxisAlignedClip(ID2D1CommandSink *iface, const D2D1_RECT_F *rect,
++        D2D1_ANTIALIAS_MODE mode)
++{
++    ID2D1DeviceContext_PushAxisAlignedClip(impl_from_ID2D1CommandSink(iface)->context, rect, mode);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_PushLayer(ID2D1CommandSink *iface,
++        const D2D1_LAYER_PARAMETERS1 *params, ID2D1Layer *layer)
++{
++    ID2D1DeviceContext_PushLayer(impl_from_ID2D1CommandSink(iface)->context, params, layer);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_PopAxisAlignedClip(ID2D1CommandSink *iface)
++{
++    ID2D1DeviceContext_PopAxisAlignedClip(impl_from_ID2D1CommandSink(iface)->context);
++    return S_OK;
++}
++
++static HRESULT STDMETHODCALLTYPE d2d_player_PopLayer(ID2D1CommandSink *iface)
++{
++    ID2D1DeviceContext_PopLayer(impl_from_ID2D1CommandSink(iface)->context);
++    return S_OK;
++}
++
++static const struct ID2D1CommandSinkVtbl d2d_command_list_player_vtbl =
++{
++    d2d_player_QueryInterface,
++    d2d_player_AddRef,
++    d2d_player_Release,
++    d2d_player_BeginDraw,
++    d2d_player_EndDraw,
++    d2d_player_SetAntialiasMode,
++    d2d_player_SetTags,
++    d2d_player_SetTextAntialiasMode,
++    d2d_player_SetTextRenderingParams,
++    d2d_player_SetTransform,
++    d2d_player_SetPrimitiveBlend,
++    d2d_player_SetUnitMode,
++    d2d_player_Clear,
++    d2d_player_DrawGlyphRun,
++    d2d_player_DrawLine,
++    d2d_player_DrawGeometry,
++    d2d_player_DrawRectangle,
++    d2d_player_DrawBitmap,
++    d2d_player_DrawImage,
++    d2d_player_DrawGdiMetafile,
++    d2d_player_FillMesh,
++    d2d_player_FillOpacityMask,
++    d2d_player_FillGeometry,
++    d2d_player_FillRectangle,
++    d2d_player_PushAxisAlignedClip,
++    d2d_player_PushLayer,
++    d2d_player_PopAxisAlignedClip,
++    d2d_player_PopLayer,
++};
++
++static void d2d_device_context_draw_command_list(struct d2d_device_context *context, ID2D1CommandList *command_list,
++        const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect)
++{
++    ID2D1DeviceContext *iface = (ID2D1DeviceContext *)&context->ID2D1DeviceContext6_iface;
++    struct d2d_command_list_player player;
++    D2D1_PRIMITIVE_BLEND blend;
++    D2D1_ANTIALIAS_MODE mode;
++    D2D1_UNIT_MODE unit_mode;
++    D2D1_MATRIX_3X2_F transform;
++
++    player.ID2D1CommandSink_iface.lpVtbl = &d2d_command_list_player_vtbl;
++    player.context = iface;
++    ID2D1DeviceContext_GetTransform(iface, &transform);
++    player.base = transform;
++    if (target_offset)
++    {
++        player.base._31 += target_offset->x * transform._11 + target_offset->y * transform._21;
++        player.base._32 += target_offset->x * transform._12 + target_offset->y * transform._22;
++    }
++    mode = ID2D1DeviceContext_GetAntialiasMode(iface);
++    blend = ID2D1DeviceContext_GetPrimitiveBlend(iface);
++    unit_mode = ID2D1DeviceContext_GetUnitMode(iface);
++
++    if (image_rect)
++    {
++        ID2D1DeviceContext_SetTransform(iface, &player.base);
++        ID2D1DeviceContext_PushAxisAlignedClip(iface, image_rect, mode);
++    }
++    ID2D1DeviceContext_SetTransform(iface, &player.base);
++    ID2D1CommandList_Stream(command_list, &player.ID2D1CommandSink_iface);
++    if (image_rect)
++    {
++        ID2D1DeviceContext_SetTransform(iface, &player.base);
++        ID2D1DeviceContext_PopAxisAlignedClip(iface);
++    }
++
++    ID2D1DeviceContext_SetTransform(iface, &transform);
++    ID2D1DeviceContext_SetAntialiasMode(iface, mode);
++    ID2D1DeviceContext_SetPrimitiveBlend(iface, blend);
++    ID2D1DeviceContext_SetUnitMode(iface, unit_mode);
++}
++
+ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *iface, ID2D1Image *image,
+         const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect, D2D1_INTERPOLATION_MODE interpolation_mode,
+         D2D1_COMPOSITE_MODE composite_mode)
+ {
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
++    ID2D1CommandList *command_list;
+     ID2D1Bitmap *bitmap;
+ 
+     TRACE("iface %p, image %p, target_offset %s, image_rect %s, interpolation_mode %#x, composite_mode %#x.\n",
+@@ -2984,6 +3250,13 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
+         return;
+     }
+ 
++    if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1CommandList, (void **)&command_list)))
++    {
++        d2d_device_context_draw_command_list(context, command_list, target_offset, image_rect);
++        ID2D1CommandList_Release(command_list);
++        return;
++    }
++
+     FIXME("Unhandled image %p.\n", image);
+ }
+ 

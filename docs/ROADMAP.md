@@ -77,16 +77,17 @@ Dates after M2 depend on what the checklists show.
   captions, plus its Premiere cut) as an end-to-end test.
 
 **Next, by cause (each one blocks functions in several apps)**
-1. **Direct2D:** stroke styles, layers (PushLayer/PopLayer), Flush, command lists. Affects
-   Audition's UI and After Effects panels.
+1. **Direct2D:** stroke styles, layers (PushLayer/PopLayer), Flush (command lists play back
+   since 0076). Affects Audition's UI and After Effects panels.
 2. **DirectComposition** beyond the minimum we have: Premiere's Import/Export modes.
 3. **Web panels** (CEF and MSHTML): Photoshop Home, Premiere Learn, the licensing window.
 4. **Creative Cloud life cycle:** the hang after it updates itself, the close button.
 5. **Memory:** Illustrator on 16 GB machines.
 6. ~~**HiDPI** scaling by default~~ done: `adobewine setup` follows the desktop's scale.
-7. **Pen pressure** under XWayland: an opt-in `adobewine tablet [--remove]` that installs
-   WineTab's wintab32 next to Photoshop, with a pressure curve (`XWINTAB_PRESSURE_GAMMA`).
-   Proposed and tested by NickPittas in [#13](../../../issues/13); Illustrator to check too.
+7. ~~**Pen pressure** under XWayland~~ done in Wine itself (patch 0075): Photoshop (with
+   `UseSystemStylus 0`), Illustrator and After Effects follow the pen's pressure; InDesign and
+   Premiere get it as a pen. Thanks to NickPittas for the analysis in [#13](../../../issues/13);
+   a pressure curve option like his `XWINTAB_PRESSURE_GAMMA` could follow.
 
 **Always**
 - Re-run the checklists after each Adobe update; a drop counts as a serious bug.

@@ -82,3 +82,8 @@ to WineHQ; help with that is very welcome.
 | 0069 | win32u | Offscreen swapchains present immediately and vsync is paced to the display refresh rate, 59 to 237 fps at 240 Hz under XWayland (`WINE_OFFSCREEN_PACING`, `WINE_OFFSCREEN_REFRESH`) | nvb-uy |
 | 0070 | win32u | Copy waited-for offscreen presents only after they completed | nvb-uy |
 | 0071 | msvcp140 | Concurrency::details::platform::GetNextAsyncId (AdobeNotificationHelper aborted on the stub) | nvb-uy |
+| 0072 | win32u | An explorer without a desktop window doesn't start another one (Creative Cloud's 6.11 self-update started 250 explorers and took the session down) | AdobeWine |
+| 0073 | win32u | get_desktop_window connects a thread that never loaded user32 to the default desktop (Creative Cloud's update helper) | AdobeWine |
+| 0074 | win32u | Processes with a restricted token read the display configuration (they saw a 1024x768 screen) | AdobeWine |
+| 0075 | winex11, win32u, server | Pen tablets under XWayland from XInput2: continuous wintab packets with pressure, and Windows Ink pen pointers with pressure and tilt | AdobeWine |
+| 0076 | d2d1 | Command lists play back in DrawImage() (After Effects' "Direct2D Drawbot error", blank panels) | AdobeWine |

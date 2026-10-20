@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Pen tablets work under XWayland without extra software (patch 0075): Photoshop (set
+  `UseSystemStylus 0` in `PSUserConfig.txt`), Illustrator and After Effects follow pen pressure, and
+  InDesign and Premiere get the pen as a pen. Wine now reads the tablet through XInput2 and also
+  delivers it as Windows Ink pen input. `tools/pen.py` simulates a pen for testing; `tests/pen` has
+  the test scripts and a probe (#13).
+- After Effects: no more "Direct2D Drawbot error" on every redraw; its panels draw again (patch 0076).
 - Creative Cloud's self-update to 6.11 no longer takes the whole desktop session down: a helper
   started without a desktop made Wine start explorer after explorer (250 in a second) until X ran
   out of clients and memory and swap filled (patch 0072). New `tools/sandbox.sh` runs a command
