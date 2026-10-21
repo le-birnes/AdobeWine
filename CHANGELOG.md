@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Scripting an Adobe app over COM (as automation tools and other apps do) works again after the
+  app was killed or crashed and restarted; Wine's rpcss kept the dead instance's registration
+  (patch 0086).
+
 ## 0.3.0 - 2026-10-21
 
 - Packages: the AUR packages build the patched vkd3d-proton and CUDA bridge the After Effects viewers
