@@ -93,3 +93,5 @@ to WineHQ; help with that is very welcome.
 | 0080 | win32u | Imported Vulkan memory keeps its NT handle; no NULL Win32 handle for memory that was not exported | AdobeWine |
 | 0081 | win32u | D3DKMT escapes returning the host fd of shared resources and fences (CUDA interop through nvcuda) | AdobeWine |
 | 0082 | win32u | A window's offscreen present leaves out visible child windows that present their own surface (Premiere Pro's Import and Export modes stayed black under the main window's swapchain) | AdobeWine |
+| 0083 | win32u | Re-presenting offscreen surfaces (0019) no longer waits for surfaces_lock under the user lock; Premiere deadlocked while dragging timeline clips | Cikappa2904 |
+| 0084 | d2d1 | Shape shaders compiled once per process instead of per render target; Premiere's UI thread spent 71% of its time in d3dcompiler_47 | Cikappa2904 |

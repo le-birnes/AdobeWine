@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Premiere Pro no longer freezes for good while dragging clips in the timeline (a lock-order
+  deadlock in the offscreen-surface re-copy, patch 0083), and its UI no longer spends most of its
+  time recompiling Direct2D shaders for every render target (patch 0084, render targets ~25x faster
+  to create). Both by @Cikappa2904 (#14), with `tests/layered/flushrace.c` and `tests/d2d/rtcreate.c`.
 - Real production job as an end-to-end test: a 320-layer After Effects comp with animated captions
   renders like on Windows, and its Premiere cut, with the comp through Dynamic Link (a headless After
   Effects renders it), exports 10 s in 14.5-20 s (Windows 19.6 s); the output matches Windows' export of the same cut
