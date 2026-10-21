@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Premiere Pro: the Import and Export modes draw; they stayed black. The main window has its own
+  always-black Direct3D swapchain that was copied over the modes' child windows (patch 0082).
 - After Effects: the Composition and Layer viewers show the composition again with GPU (CUDA) rendering on
   NVIDIA; they stayed black. AE passes CUDA frames to its Direct3D 12 viewer through CUDA interop: patches
   0079-0081, a vkd3d-proton patch (shared buffers exportable) and a CUDA bridge patch (D3D11 interop,

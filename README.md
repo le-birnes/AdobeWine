@@ -46,7 +46,6 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   label. Full list: [CHANGELOG.md](CHANGELOG.md).
 
 ### Known gaps
-- Premiere's Import and Export modes draw black (Edit mode, Home and Learn work); export through Media Encoder meanwhile.
 - Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists

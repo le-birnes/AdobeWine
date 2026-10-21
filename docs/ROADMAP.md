@@ -37,7 +37,7 @@ Pro, Media Encoder, Audition, After Effects, InDesign, Bridge.
 | Creative Cloud | 10/10 | 10 / 248 | close button doesn't quit; hang after a self-update |
 | Photoshop | 10/10 | **85 / 661** | all 75 filters and adjustments run so far match Windows (60 pixel-identical, the random ones at the same noise level). Web Home panel blank |
 | Illustrator | 11/11 | 118 / 1730 | 107 of 139 Windows reference outputs match, the rest not compared yet; memory use on 16 GB machines (#2) |
-| Premiere Pro | 10/10 | 10 / 368 | Import/Export modes draw black; HEVC export passes the speed gate (5-10% faster than Windows after correction) |
+| Premiere Pro | 10/10 | 10 / 368 | Import/Export modes draw (patch 0082); HEVC export passes the speed gate (5-10% faster than Windows after correction) |
 | Media Encoder | 10/10 | 10 / 547 | |
 | Audition | 10/10 | 10 / 498 | |
 | After Effects | partial | being inventoried | renders since 0.2.2 (Render Queue crash fixed, patch 0061); a real 300-layer comp matches the Windows render. Scripting, keyframes, panels work |
@@ -70,7 +70,6 @@ Dates after M2 depend on what the checklists show.
 ## What's being worked on
 
 **Now**
-- **Premiere's Import/Export modes** (still black): finding out what draws them on Windows.
 - Running the inventoried functions under Wine and comparing with the Windows outputs, app by
   app (Photoshop's filters are done; Illustrator, Media Encoder and Premiere references are next).
 - A real production job (an After Effects comp with a few hundred layers and animated
@@ -79,7 +78,7 @@ Dates after M2 depend on what the checklists show.
 **Next, by cause (each one blocks functions in several apps)**
 1. **Direct2D:** stroke styles, layers (PushLayer/PopLayer), Flush (command lists play back
    since 0076). Affects Audition's UI and After Effects panels.
-2. **DirectComposition** beyond the minimum we have: Premiere's Import/Export modes.
+2. **DirectComposition** beyond the minimum we have (Premiere's Import/Export modes turned out not to need it: patch 0082).
 3. **Web panels** (CEF and MSHTML): Photoshop Home, Premiere Learn, the licensing window.
 4. **Creative Cloud life cycle:** the self-update to 6.11 now completes on its own (patches
    0072-0074, 0077, 0078); the close button.

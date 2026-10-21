@@ -92,3 +92,4 @@ to WineHQ; help with that is very welcome.
 | 0079 | d2d1 | Unpremultiply effect; DrawImage() draws Premultiply/Unpremultiply effects as their input (After Effects viewer overlay) | AdobeWine |
 | 0080 | win32u | Imported Vulkan memory keeps its NT handle; no NULL Win32 handle for memory that was not exported | AdobeWine |
 | 0081 | win32u | D3DKMT escapes returning the host fd of shared resources and fences (CUDA interop through nvcuda) | AdobeWine |
+| 0082 | win32u | A window's offscreen present leaves out visible child windows that present their own surface (Premiere Pro's Import and Export modes stayed black under the main window's swapchain) | AdobeWine |

@@ -1,0 +1,59 @@
+win32u: Leave visible child surfaces out of their parent's offscreen present.
+
+On Windows every swapchain is its own layer above its parent window. Here offscreen client surfaces are all
+copied into the toplevel, so a parent without WS_CLIPCHILDREN that presents covers its children until they
+present again. Premiere Pro's main window has a D3D swapchain that is always black, and its Import and Export
+modes (child windows with their own swapchains, redrawn only on change) stayed black under it. The parent's
+present now excludes the client area of visible descendants that have offscreen surfaces of their own.
+
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -431,6 +431,32 @@
+     pthread_mutex_unlock( &surfaces_lock );
+ }
+ 
++/* Visible descendants of the surface's window that present their own offscreen surface. On Windows each
++ * swapchain is a separate layer above its parent; here everything is copied into the toplevel, so the
++ * parent's present must leave their area alone even without WS_CLIPCHILDREN, or it covers them until
++ * they present again (Premiere Pro's Import and Export modes stayed black under the main window's
++ * swapchain). Called with surfaces_lock held; the region is in screen coordinates, as DCX_EXCLUDERGN wants. */
++static HRGN get_child_surfaces_region( struct client_surface *surface )
++{
++    struct ratio dpi = get_dpi_for_window( surface->hwnd );
++    struct client_surface *other;
++    struct window_rects rects;
++    HRGN region = 0, rect_rgn;
++
++    LIST_FOR_EACH_ENTRY( other, &client_surfaces, struct client_surface, entry )
++    {
++        if (other == surface || !other->hwnd || !other->offscreen) continue;
++        if (!is_child( surface->hwnd, other->hwnd ) || !is_window_visible( other->hwnd )) continue;
++        if (!get_window_rects( other->hwnd, COORDS_SCREEN, &rects, dpi )) continue;
++        if (!region && !(region = NtGdiCreateRectRgn( 0, 0, 0, 0 ))) break;
++        if (!(rect_rgn = NtGdiCreateRectRgn( rects.client.left, rects.client.top,
++                                             rects.client.right, rects.client.bottom ))) continue;
++        NtGdiCombineRgn( region, region, rect_rgn, RGN_OR );
++        NtGdiDeleteObjectApp( rect_rgn );
++    }
++    return region;
++}
++
+ void client_surface_present( struct client_surface *surface )
+ {
+     HDC hdc = 0;
+@@ -442,7 +468,14 @@
+         client_surface_update_locked( surface );
+         /* A hidden window shows nothing; copying its stale content would paint over a
+          * visible sibling at the same place (Audition stacks its editors that way). */
+-        if (surface->offscreen && is_window_visible( hwnd )) hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE );
++        if (surface->offscreen && is_window_visible( hwnd ))
++        {
++            HRGN children = get_child_surfaces_region( surface );
++
++            /* the DC owns and deletes the exclusion region */
++            if (children) hdc = NtUserGetDCEx( hwnd, children, DCX_CACHE | DCX_USESTYLE | DCX_EXCLUDERGN );
++            else hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE );
++        }
+         surface->funcs->present( surface, hdc );
+         if (hdc) NtUserReleaseDC( hwnd, hdc );
+     }
