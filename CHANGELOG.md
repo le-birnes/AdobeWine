@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Illustrator's canvas works with mouse and pen while another Adobe app is open: switching apps left the
+  other app's window on top in Wine's own window order, so Illustrator ignored every click and drag on
+  the canvas (patch 0087, `tests/zorder/zorder.c`).
 - Scripting an Adobe app over COM (as automation tools and other apps do) works again after the
   app was killed or crashed and restarted; Wine's rpcss kept the dead instance's registration
   (patch 0086).

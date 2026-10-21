@@ -97,3 +97,4 @@ to WineHQ; help with that is very welcome.
 | 0084 | d2d1 | Shape shaders compiled once per process instead of per render target; Premiere's UI thread spent 71% of its time in d3dcompiler_47 | Cikappa2904 |
 | 0085 | opencl | clCreateCommandQueueWithProperties (OpenCL 2.0), mapped to the 1.2 call; Premiere quit after the splash on AMD (rusticl) without it (#15) | AdobeWine |
 | 0086 | rpcss | Classes registered by a COM server that was killed or crashed are dropped, so scripts reach the restarted app (0x800706ba before) | AdobeWine |
+| 0087 | win32u, winex11 | A window the window manager activates goes to the top of Wine's z-order; with two Adobe apps open, Illustrator's canvas ignored every click and drag | AdobeWine |

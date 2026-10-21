@@ -1,0 +1,54 @@
+win32u, winex11: Raise a window to the top of Wine's z-order when the host activates it.
+
+"The system places the active window at the top of the z-order." Wine did not when the window manager
+activated a window of another Wine process (taskbar, Alt+Tab, a click), so Wine's z-order kept the previous
+app's window above it. WindowFromPoint then named that other window, and apps that check it ignored input:
+Illustrator's canvas took no clicks or drags at all while Audition, behind it on screen, was open.
+
+winex11: when _NET_ACTIVE_WINDOW names one of our windows while another process holds the foreground (which
+cannot map our X window), post the state update to that window so its own thread takes the foreground.
+win32u: set_active_window raises the foreground toplevel when another window is above it, also when the
+thread's active window did not change. Test: tests/zorder/zorder.c (WindowFromPoint across a WM switch).
+
+--- a/dlls/win32u/input.c
++++ b/dlls/win32u/input.c
+@@ -2224,6 +2224,14 @@
+     }
+ 
+ done:
++    /* "The system places the active window at the top of the z-order." Wine did not when the host or a click
++     * activated a window, so another process's window could stay above it in Wine's z-order: WindowFromPoint
++     * then named that window, and Illustrator's canvas ignored every click while Audition, though behind it on
++     * screen, was above it here. Also when the thread's active window did not change (the window manager
++     * switched back to it), hence here; only when some window is above it. */
++    if (hwnd && hwnd == NtUserGetForegroundWindow() && NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window() &&
++        (get_window_long( hwnd, GWL_STYLE ) & WS_VISIBLE) && get_window_relative( hwnd, GW_HWNDPREV ))
++        NtUserSetWindowPos( hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+     if (hwnd)
+     {
+         if (hwnd == NtUserGetForegroundWindow()) user_driver->pActivateWindow( hwnd, previous );
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1836,6 +1836,11 @@
+         *foreground = hwnd_from_window( thread_data->display, thread_data->current_state.net_active_window );
+         if (*foreground == old_foreground) *foreground = 0;
+     }
++    else if (!is_virtual_desktop() && !thread_data->net_active_window_serial &&
++             NtUserGetWindowThread( hwnd, NULL ) == GetCurrentThreadId() && hwnd != old_foreground &&
++             hwnd == hwnd_from_window( thread_data->display, thread_data->current_state.net_active_window ) &&
++             !window_has_pending_wm_state( hwnd, NormalState ) && !window_is_reparenting( hwnd ))
++        *foreground = hwnd;     /* the host activated this window while another process's window is foreground */
+ 
+     if ((data = get_win_data( hwnd )))
+     {
+@@ -2014,6 +2019,10 @@
+         return;
+ 
+     NtUserPostMessage( NtUserGetForegroundWindow(), WM_WINE_WINDOW_STATE_CHANGED, 0, 0 );
++    /* the window manager activated one of our windows while another process holds the foreground: that
++     * process cannot map our X window, so let the window's own thread take the foreground */
++    if (current_hwnd && current_hwnd != NtUserGetForegroundWindow())
++        NtUserPostMessage( current_hwnd, WM_WINE_WINDOW_STATE_CHANGED, 0, 0 );
+ }
+ 
+ Window get_net_active_window( Display *display )
