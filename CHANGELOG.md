@@ -4,7 +4,8 @@
 
 - Real production job as an end-to-end test: a 320-layer After Effects comp with animated captions
   renders like on Windows, and its Premiere cut, with the comp through Dynamic Link (a headless After
-  Effects renders it), exports 10 s in 16.7 s (Windows 19.6 s) with frames matching Windows (SSIM 0.993).
+  Effects renders it), exports 10 s in 14.5-20 s (Windows 19.6 s); the output matches Windows' export of the same cut
+  (SSIM 0.993, PSNR 49 dB, audio identical).
 - Premiere Pro: the Import and Export modes draw; they stayed black. The main window has its own
   always-black Direct3D swapchain that was copied over the modes' child windows (patch 0082).
 - After Effects: the Composition and Layer viewers show the composition again with GPU (CUDA) rendering on
