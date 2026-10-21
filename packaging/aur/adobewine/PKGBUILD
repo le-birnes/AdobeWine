@@ -1,6 +1,6 @@
 # Maintainer: AdobeWine contributors (see https://github.com/le-birnes/AdobeWine)
 pkgname=adobewine
-pkgver=0.2.2
+pkgver=0.3.0
 _winever=11.18
 pkgrel=1
 pkgdesc="AdobeWine: Wine ${_winever} with patches for Adobe Creative Cloud apps (Photoshop, Illustrator, Premiere Pro, Audition, Media Encoder)"
@@ -16,7 +16,7 @@ depends=(
 makedepends=(
   git ffmpeg libcups libgphoto2 libxcomposite libxinerama libxxf86vm mesa mingw-w64-gcc
   opencl-headers opencl-icd-loader pcsclite perl samba sane sdl2 unixodbc v4l-utils
-  vulkan-headers
+  vulkan-headers glslang python
 )
 optdepends=(
   'gst-plugins-good: MP4/MKV media in Premiere Pro, Audition and Media Encoder'
@@ -62,6 +62,12 @@ package() {
   install -d "$pkgdir/opt/adobewine/lib"
   cp -r bin config scripts shims tools patches docs README.md LICENSE VERSION "$pkgdir/opt/adobewine/"
   install -m644 d3d12.dll winclose.exe d3d12fl.exe "$pkgdir/opt/adobewine/lib/"
+  # After Effects' composition viewers: patched vkd3d-proton and CUDA bridge (patches-deps), built with
+  # the Wine just installed (winegcc); setup-prefix.sh installs them from lib/adobewine-gpu.
+  # makepkg's host CFLAGS/LDFLAGS would leak into the MinGW cross build.
+  env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS PATH="$pkgdir/opt/adobewine/runtime/bin:$PATH" \
+      scripts/build-gpu-deps.sh "$srcdir/gpu-deps"
+  install -Dm644 -t "$pkgdir/opt/adobewine/lib/adobewine-gpu/x64" "$srcdir"/gpu-deps/adobewine-gpu/x64/*.dll
   install -d "$pkgdir/usr/bin"
   ln -s /opt/adobewine/bin/adobewine "$pkgdir/usr/bin/adobewine"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"

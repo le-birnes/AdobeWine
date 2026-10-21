@@ -61,6 +61,7 @@ done
 # After Effects' composition viewers: vkd3d-proton with shared buffers exportable and the CUDA bridge with
 # D3D11 interop (patches-deps), when built with scripts/build-gpu-deps.sh.
 GPU="$DEPS/adobewine-gpu/x64"
+[ -f "$GPU/d3d12core.dll" ] || GPU="$ADOBEWINE_SRC/lib/adobewine-gpu/x64"      # built by the package
 [ -f "$GPU/d3d12core.dll" ] && cp "$GPU/d3d12core.dll" "$SYS/"
 if [ -f "$ADOBEWINE_SRC/lib/d3d12.dll" ]; then
   mv "$SYS/d3d12.dll" "$SYS/d3d12_vkd3d.dll"; cp "$ADOBEWINE_SRC/lib/d3d12.dll" "$SYS/d3d12.dll"

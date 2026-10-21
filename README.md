@@ -7,7 +7,7 @@ Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photos
 Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
 for everyday use; After Effects renders real projects now but is less tested; InDesign and Bridge are next.
 
-> **Status: early testing (0.2.2).** Built and measured on one reference machine (Arch-based,
+> **Status: early testing (0.3.0).** Built and measured on one reference machine (Arch-based,
 > NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
 > (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
 > [try it and report back](CONTRIBUTING.md), good or bad.
@@ -43,10 +43,15 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
 - **0.2.2:** After Effects renders (a crash in Wine's Direct2D killed its main thread when a comp was
   added to the Render Queue); Illustrator's PSD/SVG exports use Myriad Pro like on Windows; the apps
   follow your desktop's scale on HiDPI screens; the desktop file picker shows After Effects' "Format:"
-  label. Full list: [CHANGELOG.md](CHANGELOG.md).
+  label.
+- **0.3.0:** After Effects' composition viewer shows the comp with CUDA; Premiere's Import and Export
+  modes draw, its timeline no longer deadlocks (Cikappa2904) and it starts on AMD with Mesa's
+  OpenCL; pen tablets with pressure under XWayland; Creative Cloud's self-update to 6.11 completes;
+  Photoshop renders faster and sharper on Wayland/NVIDIA (nvb-uy). Rerun `adobewine setup` after
+  updating. Full list: [CHANGELOG.md](CHANGELOG.md).
 
 ### Known gaps
-- Only NVIDIA is tested; on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
+- NVIDIA is the tested platform. On AMD, Photoshop works and Premiere is being tested (#15); on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists
 
