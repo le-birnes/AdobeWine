@@ -72,8 +72,6 @@ Dates after M2 depend on what the checklists show.
 **Now**
 - Running the inventoried functions under Wine and comparing with the Windows outputs, app by
   app (Photoshop's filters are done; Illustrator, Media Encoder and Premiere references are next).
-- A real production job (an After Effects comp with a few hundred layers and animated
-  captions, plus its Premiere cut) as an end-to-end test.
 
 **Next, by cause (each one blocks functions in several apps)**
 1. **Direct2D:** stroke styles, layers (PushLayer/PopLayer), Flush (command lists play back
