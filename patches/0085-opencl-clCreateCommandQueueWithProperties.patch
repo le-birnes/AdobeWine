@@ -1,0 +1,70 @@
+opencl: Add clCreateCommandQueueWithProperties, mapped to clCreateCommandQueue.
+
+Wine's OpenCL.dll exports the OpenCL 1.2 API, while host devices (rusticl, ROCm, NVIDIA) report 2.0 or
+later. Premiere Pro's OpenVINO GPU plugin (openvino_intel_gpu_plugin.dll) imports the 2.0 entry point; on
+AMD under Mesa's rusticl Premiere reaches it at startup, the import fails (exception c06d007f) and Premiere
+quits right after the splash (GitHub issue #15). Like the Khronos ICD loader in front of a 1.2 driver, take
+CL_QUEUE_PROPERTIES from the list, ignore the priority/throttle hints and reject anything else.
+
+diff --git a/dlls/opencl/opencl.spec b/dlls/opencl/opencl.spec
+index 31270c0..e19aaba 100644
+--- a/dlls/opencl/opencl.spec
++++ b/dlls/opencl/opencl.spec
+@@ -2,6 +2,7 @@
+ @ stdcall clCompileProgram(ptr long ptr ptr long ptr ptr ptr ptr)
+ @ stdcall clCreateBuffer(ptr int64 long ptr ptr)
+ @ stdcall clCreateCommandQueue(ptr ptr int64 ptr)
++@ stdcall clCreateCommandQueueWithProperties(ptr ptr ptr ptr)
+ @ stdcall clCreateContext(ptr long ptr ptr ptr ptr)
+ @ stdcall clCreateContextFromType(ptr int64 ptr ptr ptr)
+ @ stdcall clCreateFromGLBuffer(ptr int64 long ptr)
+diff --git a/dlls/opencl/pe_wrappers.c b/dlls/opencl/pe_wrappers.c
+index 3b68460..aed8b7f 100644
+--- a/dlls/opencl/pe_wrappers.c
++++ b/dlls/opencl/pe_wrappers.c
+@@ -277,6 +277,45 @@ cl_int WINAPI clGetGLTextureInfo( cl_mem memobj, cl_gl_texture_info param_name,
+ }
+ 
+ 
++/* OpenCL 2.0; this proxy exports the 1.2 API, but host devices report 2.0+ and Premiere's OpenVINO
++ * GPU plugin imports it. Like the Khronos ICD loader on a 1.2 driver, map it to clCreateCommandQueue. */
++cl_command_queue WINAPI clCreateCommandQueue( cl_context context, cl_device_id device,
++        cl_command_queue_properties properties, cl_int *errcode_ret );
++
++cl_command_queue WINAPI clCreateCommandQueueWithProperties( cl_context context, cl_device_id device,
++        const cl_ulong *properties, cl_int *errcode_ret )
++{
++    cl_command_queue_properties flags = 0;
++
++    TRACE( "(%p, %p, %p, %p)\n", context, device, properties, errcode_ret );
++
++    for (; properties && *properties; properties += 2)
++    {
++        switch (properties[0])
++        {
++        case CL_QUEUE_PROPERTIES:
++            flags = properties[1];
++            break;
++        case 0x1096: /* CL_QUEUE_PRIORITY_KHR */
++        case 0x1097: /* CL_QUEUE_THROTTLE_KHR */
++            FIXME( "ignoring hint %#I64x = %#I64x\n", properties[0], properties[1] );
++            break;
++        default:
++            FIXME( "unsupported property %#I64x\n", properties[0] );
++            if (errcode_ret) *errcode_ret = CL_INVALID_VALUE;
++            return NULL;
++        }
++    }
++    if (flags & ~(cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE))
++    {
++        FIXME( "unsupported queue properties %#I64x\n", flags );
++        if (errcode_ret) *errcode_ret = CL_INVALID_QUEUE_PROPERTIES;
++        return NULL;
++    }
++    return clCreateCommandQueue( context, device, flags, errcode_ret );
++}
++
++
+ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
+ {
+     if (reason == DLL_PROCESS_ATTACH)

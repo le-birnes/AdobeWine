@@ -95,3 +95,4 @@ to WineHQ; help with that is very welcome.
 | 0082 | win32u | A window's offscreen present leaves out visible child windows that present their own surface (Premiere Pro's Import and Export modes stayed black under the main window's swapchain) | AdobeWine |
 | 0083 | win32u | Re-presenting offscreen surfaces (0019) no longer waits for surfaces_lock under the user lock; Premiere deadlocked while dragging timeline clips | Cikappa2904 |
 | 0084 | d2d1 | Shape shaders compiled once per process instead of per render target; Premiere's UI thread spent 71% of its time in d3dcompiler_47 | Cikappa2904 |
+| 0085 | opencl | clCreateCommandQueueWithProperties (OpenCL 2.0), mapped to the 1.2 call; Premiere quit after the splash on AMD (rusticl) without it (#15) | AdobeWine |

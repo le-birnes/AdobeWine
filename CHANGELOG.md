@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Premiere Pro starts on AMD GPUs with Mesa's OpenCL (rusticl): it quit right after the splash
+  because Wine's OpenCL lacked `clCreateCommandQueueWithProperties`, which Premiere's OpenVINO GPU
+  plugin imports (patch 0085, `tests/opencl/cqprops.c`). Found with @pausebreakalex's logs (#15);
+  until the next release, `OCL_ICD_VENDORS=/nonexistent adobewine premiere` works around it.
 - Premiere Pro no longer freezes for good while dragging clips in the timeline (a lock-order
   deadlock in the offscreen-surface re-copy, patch 0083), and its UI no longer spends most of its
   time recompiling Direct2D shaders for every render target (patch 0084, render targets ~25x faster
