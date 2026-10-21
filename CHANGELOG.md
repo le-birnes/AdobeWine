@@ -17,10 +17,12 @@
   can read the display configuration again (patch 0074; before, they saw a 1024x768 screen).
   Helpers that reach Wine's window code before user32 sets it up no longer hang on their first
   window or lose the display configuration (patch 0077); the step that swaps the updated files in
-  now finishes, and the 6.11 self-update completes on its own. One case is still open: when the
-  update has to install a newer Visual C++ runtime itself, that installer fails to load its language
-  file (run on its own it installs fine), so install the runtime first if an update stops at
-  "Installing VCRedist".
+  now finishes, and the 6.11 self-update completes on its own, including the Visual C++ runtime
+  it installs (patch 0078).
+- Creative Cloud's Adobe Fonts sync no longer makes every program started afterwards crash (patch
+  0078): a font it added and removed again that has the same name as one of your system fonts (Open
+  Sans) corrupted Wine's font list in each new process. This was behind the VC++ installer failing
+  during the update and the storms of crashing console windows.
 - Photoshop rendering and speed on Wayland/NVIDIA, by nvb-uy (#12): text without FreeType
   auto-hinting and with quarter-pixel glyph positions like on Windows, no colour fringes next to
   Direct2D text (`config/fonts.conf`), multisampled and analytic antialiasing in Direct2D,

@@ -1,0 +1,30 @@
+win32u: Reuse an existing family when loading the font cache.
+
+Each process loads the host's fonts before it reads Wine's font cache. A cache family with the name
+of a family the process already has (Creative Cloud's Adobe Fonts sync adds fonts such as Open Sans
+with AddFontResource and removes them again, which leaves empty family keys) was created a second
+time: it could not enter the family name tree, got no faces, and releasing it removed a node that
+wasn't in the tree. The corrupted tree crashed every process started afterwards in user32
+initialization (no GDI stock objects, windows can't be created): conhost storms, and the VC++
+installer that CC 6.11's self-update runs failed with 0x80070005 loading its loc file. Look the
+family up on every load, not only on a refresh (patch 0043).
+
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -1362,10 +1362,12 @@
+         if (!query_reg_value( hkey_family, NULL, info, sizeof(buffer) ))
+             second_name[0] = 0;
+ 
+-        /* On a refresh the family may already exist (this process added the face itself):
+-         * a second family of that name would not enter the name tree, and releasing it
+-         * would remove the existing family's tree entry. */
+-        if (newer_than && (family = find_family_from_name( family_name ))) family->refcount++;
++        /* The family may already exist: this process added the face itself (refresh), or it
++         * loaded a host font of that name before reading the cache (fonts that another process
++         * added and removed again leave empty family keys behind, such as Adobe Fonts synced by
++         * Creative Cloud). A second family of that name would not enter the name tree, and
++         * releasing it would remove a node that isn't there and corrupt the tree. */
++        if ((family = find_family_from_name( family_name ))) family->refcount++;
+         else family = create_family( family_name, second_name );
+ 
+         load_face_from_cache( hkey_family, family, buffer, sizeof(buffer), TRUE, newer_than != NULL );

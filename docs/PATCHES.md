@@ -88,3 +88,4 @@ to WineHQ; help with that is very welcome.
 | 0075 | winex11, win32u, server | Pen tablets under XWayland from XInput2: continuous wintab packets with pressure, and Windows Ink pen pointers with pressure and tilt | AdobeWine |
 | 0076 | d2d1 | Command lists play back in DrawImage() (After Effects' "Direct2D Drawbot error", blank panels) | AdobeWine |
 | 0077 | win32u | The user lock and the hardware profile key are set up on first use, for processes that reach win32u before user32 initializes it (CC 6.11 update helpers hung on their first window) | AdobeWine |
+| 0078 | win32u | Loading the font cache reuses a family the process already has; a duplicate (empty key left by Adobe Fonts sync, same name as a host font) corrupted the family tree and crashed every new process | AdobeWine |

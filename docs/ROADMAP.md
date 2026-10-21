@@ -81,8 +81,8 @@ Dates after M2 depend on what the checklists show.
    since 0076). Affects Audition's UI and After Effects panels.
 2. **DirectComposition** beyond the minimum we have: Premiere's Import/Export modes.
 3. **Web panels** (CEF and MSHTML): Photoshop Home, Premiere Learn, the licensing window.
-4. **Creative Cloud life cycle:** the self-update to 6.11 now completes (patches 0072-0074, 0077),
-   except when it has to install a newer Visual C++ runtime itself; the close button.
+4. **Creative Cloud life cycle:** the self-update to 6.11 now completes on its own (patches
+   0072-0074, 0077, 0078); the close button.
 5. **Memory:** Illustrator on 16 GB machines.
 6. ~~**HiDPI** scaling by default~~ done: `adobewine setup` follows the desktop's scale.
 7. ~~**Pen pressure** under XWayland~~ done in Wine itself (patch 0075): Photoshop (with
