@@ -71,8 +71,9 @@ Dates after M2 depend on what the checklists show.
 
 **Now**
 - The most-used functions per app, ranked from tutorials, as scripted and real-input tests with
-  objective checks: Photoshop 40 of 40 and Premiere 24 of 31 pass under Wine (2026-10-21);
-  After Effects, Illustrator, Audition, Media Encoder and InDesign next, then a file-by-file
+  objective checks: Photoshop 40 of 40, Premiere 24 of 31 and After Effects 28 of 33 pass under
+  Wine (2026-10-21);
+  Illustrator, Audition, Media Encoder and InDesign next, then a file-by-file
   comparison with the same tests run on Windows.
 - Running the inventoried functions under Wine and comparing with the Windows outputs, app by
   app (Photoshop's filters are done; Illustrator, Media Encoder and Premiere references are next).
