@@ -1,0 +1,648 @@
+nvcuda (SveSop/nvcuda d4c0fca): D3D11 interop through host copies; D3D handles through Wine's D3DKMT.
+
+- cuGraphicsD3D11RegisterResource and the cuGraphics map/unmap/array/flags/unregister calls for D3D11 2D
+  textures: a CUDA array of the texture's format, filled from the texture on map and copied back on unmap
+  (through a staging texture). The native driver cannot see a D3D11 resource under Wine.
+- cuImportExternalMemory: D3D12_HEAP/D3D12_RESOURCE/D3D11_RESOURCE (and KMT) handles, also by name, become
+  OPAQUE_FD through D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE (AdobeWine Wine patch 0081); the wine-staging IOCTL
+  stays as fallback.
+- cuImportExternalSemaphore: D3D12_FENCE/D3D11_FENCE become TIMELINE_SEMAPHORE_FD through
+  D3DKMT_ESCAPE_GET_SYNC_FD_WINE.
+After Effects' composition/layer viewers show CUDA-rendered frames with these (they stayed black).
+
+diff --git a/dlls/nvcuda/d3d.c b/dlls/nvcuda/d3d.c
+index 4ce3a94..6204c21 100644
+--- a/dlls/nvcuda/d3d.c
++++ b/dlls/nvcuda/d3d.c
+@@ -29,8 +29,10 @@
+ #include "nvcuda.h"
+ #include "nvcuda_d3d.h"
+ #include "d3d9.h"
+-#include "d3d11.h"
++#include "initguid.h"
++#include "d3d11_4.h"
+ #include "dxgi.h"
++#include "wine/list.h"
+ #include "function_mappings.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(nvcuda);
+@@ -497,15 +499,369 @@ CUresult WINAPI wine_cuD3D11GetDevice(CUdevice_v1 *pCudaDevice, IDXGIAdapter *pA
+ }
+ 
+ 
++/*
++ * D3D11 interop through host memory.
++ *
++ * The native driver cannot see a D3D11 resource under Wine (it is a Vulkan image in DXVK), so a registered
++ * 2D texture gets a CUDA array of the same size and format: mapping copies the texture into the array
++ * (through a staging texture), unmapping copies the array back into the texture. That is a round trip
++ * through system memory per map, slower than real interop but enough for display paths such as
++ * After Effects' composition viewer, which stayed black while registration failed.
++ */
++
++#ifndef CUDA_ERROR_ALREADY_MAPPED
++#define CUDA_ERROR_ALREADY_MAPPED 208
++#endif
++#ifndef CUDA_ERROR_NOT_MAPPED
++#define CUDA_ERROR_NOT_MAPPED 211
++#endif
++#define CU_MEMORYTYPE_HOST_ 0x1
++#define CU_MEMORYTYPE_ARRAY_ 0x3
++#define CU_AD_FORMAT_UNSIGNED_INT8_ 0x01
++#define CU_AD_FORMAT_UNSIGNED_INT16_ 0x02
++#define CU_AD_FORMAT_UNSIGNED_INT32_ 0x03
++#define CU_AD_FORMAT_HALF_ 0x10
++#define CU_AD_FORMAT_FLOAT_ 0x20
++#define CUDA_ARRAY3D_SURFACE_LDST_ 0x02
++#define CUDA_ARRAY3D_TEXTURE_GATHER_ 0x08
++#define CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY_ 0x01
++#define CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD_ 0x02
++#define CU_GRAPHICS_REGISTER_FLAGS_SURFACE_LDST_ 0x04
++#define CU_GRAPHICS_REGISTER_FLAGS_TEXTURE_GATHER_ 0x08
++#define CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY_ 0x01
++#define CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD_ 0x02
++
++struct d3d11_interop
++{
++    struct list entry;
++    ID3D11Texture2D *texture;
++    ID3D11Texture2D *staging;
++    ID3D11Device *device;
++    D3D11_TEXTURE2D_DESC desc;
++    CUarray_format format;
++    unsigned int channels;
++    unsigned int bpp;
++    unsigned int register_flags;
++    unsigned int map_flags;
++    CUarray array;
++    BOOL mapped;
++    BYTE *buffer;
++};
++
++static struct list d3d11_interops = LIST_INIT( d3d11_interops );
++static CRITICAL_SECTION d3d11_interop_cs;
++static CRITICAL_SECTION_DEBUG d3d11_interop_cs_debug =
++{
++    0, 0, &d3d11_interop_cs,
++    { &d3d11_interop_cs_debug.ProcessLocksList, &d3d11_interop_cs_debug.ProcessLocksList },
++      0, 0, { (DWORD_PTR)(__FILE__ ": d3d11_interop_cs") }
++};
++static CRITICAL_SECTION d3d11_interop_cs = { &d3d11_interop_cs_debug, -1, 0, 0, 0, 0 };
++
++static BOOL d3d11_format_to_cuda(DXGI_FORMAT format, CUarray_format *cu_format, unsigned int *channels, unsigned int *bpp)
++{
++    switch (format)
++    {
++    case DXGI_FORMAT_R8G8B8A8_TYPELESS: case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
++    case DXGI_FORMAT_R8G8B8A8_UINT: case DXGI_FORMAT_B8G8R8A8_TYPELESS: case DXGI_FORMAT_B8G8R8A8_UNORM:
++    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: case DXGI_FORMAT_B8G8R8X8_UNORM: case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT8_; *channels = 4; *bpp = 4; return TRUE;
++    case DXGI_FORMAT_R16G16B16A16_TYPELESS: case DXGI_FORMAT_R16G16B16A16_UNORM: case DXGI_FORMAT_R16G16B16A16_UINT:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT16_; *channels = 4; *bpp = 8; return TRUE;
++    case DXGI_FORMAT_R16G16B16A16_FLOAT:
++        *cu_format = CU_AD_FORMAT_HALF_; *channels = 4; *bpp = 8; return TRUE;
++    case DXGI_FORMAT_R32G32B32A32_TYPELESS: case DXGI_FORMAT_R32G32B32A32_FLOAT:
++        *cu_format = CU_AD_FORMAT_FLOAT_; *channels = 4; *bpp = 16; return TRUE;
++    case DXGI_FORMAT_R32G32_FLOAT:
++        *cu_format = CU_AD_FORMAT_FLOAT_; *channels = 2; *bpp = 8; return TRUE;
++    case DXGI_FORMAT_R16G16_FLOAT:
++        *cu_format = CU_AD_FORMAT_HALF_; *channels = 2; *bpp = 4; return TRUE;
++    case DXGI_FORMAT_R8G8_UNORM:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT8_; *channels = 2; *bpp = 2; return TRUE;
++    case DXGI_FORMAT_R32_FLOAT:
++        *cu_format = CU_AD_FORMAT_FLOAT_; *channels = 1; *bpp = 4; return TRUE;
++    case DXGI_FORMAT_R16_FLOAT:
++        *cu_format = CU_AD_FORMAT_HALF_; *channels = 1; *bpp = 2; return TRUE;
++    case DXGI_FORMAT_R16_UNORM:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT16_; *channels = 1; *bpp = 2; return TRUE;
++    case DXGI_FORMAT_R8_UNORM:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT8_; *channels = 1; *bpp = 1; return TRUE;
++    case DXGI_FORMAT_R32_UINT: case DXGI_FORMAT_R10G10B10A2_UNORM: case DXGI_FORMAT_R10G10B10A2_UINT:
++        *cu_format = CU_AD_FORMAT_UNSIGNED_INT32_; *channels = 1; *bpp = 4; return TRUE;
++    default:
++        return FALSE;
++    }
++}
++
++static struct d3d11_interop *get_d3d11_interop(CUgraphicsResource resource)
++{
++    struct d3d11_interop *interop;
++
++    LIST_FOR_EACH_ENTRY(interop, &d3d11_interops, struct d3d11_interop, entry)
++        if ((CUgraphicsResource)interop == resource) return interop;
++    return NULL;
++}
++
+ CUresult WINAPI wine_cuGraphicsD3D11RegisterResource(CUgraphicsResource *pCudaResource, ID3D11Resource *pD3DResource, unsigned int Flags)
+ {
+-    ERR("(%p, %p, %u) - Not supported\n", pCudaResource, pD3DResource, Flags);
+-    /* Not able to handle spesific flags at this time */
+-    if(Flags > 0)
+-      return CUDA_ERROR_INVALID_VALUE;
++    D3D11_TEXTURE2D_DESC staging_desc;
++    struct d3d11_interop *interop;
++    ID3D11Multithread *multithread;
++    ID3D11Texture2D *texture;
++    HRESULT hr;
+ 
+-    /* pD3DResource is unknown at this time and cannot be "registered" */
+-    return CUDA_ERROR_NOT_SUPPORTED;
++    TRACE("(%p, %p, %#x)\n", pCudaResource, pD3DResource, Flags);
++
++    if (!pCudaResource || !pD3DResource) return CUDA_ERROR_INVALID_VALUE;
++
++    if (FAILED(ID3D11Resource_QueryInterface(pD3DResource, &IID_ID3D11Texture2D, (void **)&texture)))
++    {
++        FIXME("Only 2D textures are supported.\n");
++        return CUDA_ERROR_NOT_SUPPORTED;
++    }
++    if (!(interop = calloc(1, sizeof(*interop))))
++    {
++        ID3D11Texture2D_Release(texture);
++        return CUDA_ERROR_OUT_OF_MEMORY;
++    }
++    interop->texture = texture;
++    ID3D11Texture2D_GetDesc(texture, &interop->desc);
++    if (!d3d11_format_to_cuda(interop->desc.Format, &interop->format, &interop->channels, &interop->bpp)
++            || interop->desc.SampleDesc.Count > 1)
++    {
++        FIXME("Unsupported texture format %#x, %u samples.\n", interop->desc.Format, interop->desc.SampleDesc.Count);
++        ID3D11Texture2D_Release(texture);
++        free(interop);
++        return CUDA_ERROR_INVALID_VALUE;
++    }
++
++    ID3D11Texture2D_GetDevice(texture, &interop->device);
++    /* the copies run on the CUDA thread, the application uses the device on its own threads */
++    if (SUCCEEDED(ID3D11Device_QueryInterface(interop->device, &IID_ID3D11Multithread, (void **)&multithread)))
++    {
++        ID3D11Multithread_SetMultithreadProtected(multithread, TRUE);
++        ID3D11Multithread_Release(multithread);
++    }
++
++    staging_desc = interop->desc;
++    staging_desc.MipLevels = 1;
++    staging_desc.ArraySize = 1;
++    staging_desc.Usage = D3D11_USAGE_STAGING;
++    staging_desc.BindFlags = 0;
++    staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
++    staging_desc.MiscFlags = 0;
++    if (FAILED(hr = ID3D11Device_CreateTexture2D(interop->device, &staging_desc, NULL, &interop->staging))
++            || !(interop->buffer = malloc((size_t)interop->desc.Width * interop->desc.Height * interop->bpp)))
++    {
++        ERR("Failed to create the staging texture, hr %#lx.\n", hr);
++        if (interop->staging) ID3D11Texture2D_Release(interop->staging);
++        ID3D11Device_Release(interop->device);
++        ID3D11Texture2D_Release(texture);
++        free(interop);
++        return CUDA_ERROR_OUT_OF_MEMORY;
++    }
++    interop->register_flags = Flags;
++
++    EnterCriticalSection(&d3d11_interop_cs);
++    list_add_tail(&d3d11_interops, &interop->entry);
++    LeaveCriticalSection(&d3d11_interop_cs);
++
++    TRACE("Registered %ux%u format %#x as %p.\n", interop->desc.Width, interop->desc.Height, interop->desc.Format, interop);
++    *pCudaResource = (CUgraphicsResource)interop;
++    return CUDA_SUCCESS;
++}
++
++static CUresult d3d11_interop_map(struct d3d11_interop *interop)
++{
++    size_t row = (size_t)interop->desc.Width * interop->bpp;
++    ID3D11DeviceContext *context;
++    D3D11_MAPPED_SUBRESOURCE map;
++    CUDA_MEMCPY2D copy = {0};
++    unsigned int y;
++    CUresult ret;
++
++    if (interop->mapped) return CUDA_ERROR_ALREADY_MAPPED;
++
++    if (!interop->array)
++    {
++        CUDA_ARRAY3D_DESCRIPTOR desc = {0};
++
++        desc.Width = interop->desc.Width;
++        desc.Height = interop->desc.Height;
++        desc.Format = interop->format;
++        desc.NumChannels = interop->channels;
++        if (interop->register_flags & CU_GRAPHICS_REGISTER_FLAGS_SURFACE_LDST_) desc.Flags |= CUDA_ARRAY3D_SURFACE_LDST_;
++        if (interop->register_flags & CU_GRAPHICS_REGISTER_FLAGS_TEXTURE_GATHER_) desc.Flags |= CUDA_ARRAY3D_TEXTURE_GATHER_;
++        if ((ret = wine_cuArray3DCreate_v2(&interop->array, &desc)))
++        {
++            ERR("Failed to create a %ux%u CUDA array, error %d.\n", interop->desc.Width, interop->desc.Height, ret);
++            return ret;
++        }
++    }
++
++    if (!(interop->register_flags & CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD_)
++            && !(interop->map_flags & CU_GRAPHICS_MAP_RESOURCE_FLAGS_WRITE_DISCARD_))
++    {
++        ID3D11Device_GetImmediateContext(interop->device, &context);
++        ID3D11DeviceContext_CopySubresourceRegion(context, (ID3D11Resource *)interop->staging, 0, 0, 0, 0,
++                (ID3D11Resource *)interop->texture, 0, NULL);
++        if (SUCCEEDED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)interop->staging, 0, D3D11_MAP_READ, 0, &map)))
++        {
++            for (y = 0; y < interop->desc.Height; ++y)
++                memcpy(interop->buffer + y * row, (BYTE *)map.pData + (size_t)y * map.RowPitch, row);
++            ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)interop->staging, 0);
++        }
++        ID3D11DeviceContext_Release(context);
++
++        copy.srcMemoryType = CU_MEMORYTYPE_HOST_;
++        copy.srcHost = interop->buffer;
++        copy.srcPitch = row;
++        copy.dstMemoryType = CU_MEMORYTYPE_ARRAY_;
++        copy.dstArray = interop->array;
++        copy.WidthInBytes = row;
++        copy.Height = interop->desc.Height;
++        if ((ret = wine_cuMemcpy2D_v2(&copy))) ERR("Upload to the CUDA array failed, error %d.\n", ret);
++    }
++
++    interop->mapped = TRUE;
++    return CUDA_SUCCESS;
++}
++
++static CUresult d3d11_interop_unmap(struct d3d11_interop *interop, CUstream stream)
++{
++    size_t row = (size_t)interop->desc.Width * interop->bpp;
++    ID3D11DeviceContext *context;
++    CUDA_MEMCPY2D copy = {0};
++    CUresult ret;
++
++    if (!interop->mapped) return CUDA_ERROR_NOT_MAPPED;
++    interop->mapped = FALSE;
++
++    if ((interop->register_flags & CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY_)
++            || (interop->map_flags & CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY_))
++        return CUDA_SUCCESS;
++
++    /* work queued on the stream before the unmap writes the array */
++    if (stream) wine_cuStreamSynchronize(stream);
++    else wine_cuCtxSynchronize();
++
++    copy.srcMemoryType = CU_MEMORYTYPE_ARRAY_;
++    copy.srcArray = interop->array;
++    copy.dstMemoryType = CU_MEMORYTYPE_HOST_;
++    copy.dstHost = interop->buffer;
++    copy.dstPitch = row;
++    copy.WidthInBytes = row;
++    copy.Height = interop->desc.Height;
++    if ((ret = wine_cuMemcpy2D_v2(&copy)))
++    {
++        ERR("Download from the CUDA array failed, error %d.\n", ret);
++        return ret;
++    }
++
++    ID3D11Device_GetImmediateContext(interop->device, &context);
++    ID3D11DeviceContext_UpdateSubresource(context, (ID3D11Resource *)interop->texture, 0, NULL, interop->buffer, row, 0);
++    /* other devices (D3D12 through a shared handle) may read the texture next */
++    ID3D11DeviceContext_Flush(context);
++    ID3D11DeviceContext_Release(context);
++    return CUDA_SUCCESS;
++}
++
++/* The functions below return TRUE when every resource in the call is a D3D11 interop resource. */
++
++BOOL d3d11_interop_map_resources(unsigned int count, CUgraphicsResource *resources, CUstream stream, CUresult *ret)
++{
++    struct d3d11_interop *interop;
++    unsigned int i;
++    BOOL handled = FALSE;
++
++    *ret = CUDA_SUCCESS;
++    EnterCriticalSection(&d3d11_interop_cs);
++    for (i = 0; i < count; ++i)
++    {
++        if (!(interop = get_d3d11_interop(resources[i])))
++        {
++            if (handled) FIXME("Mixed D3D11 interop and native resources.\n");
++            break;
++        }
++        handled = TRUE;
++        if ((*ret = d3d11_interop_map(interop))) break;
++    }
++    LeaveCriticalSection(&d3d11_interop_cs);
++    return handled;
++}
++
++BOOL d3d11_interop_unmap_resources(unsigned int count, CUgraphicsResource *resources, CUstream stream, CUresult *ret)
++{
++    struct d3d11_interop *interop;
++    unsigned int i;
++    BOOL handled = FALSE;
++
++    *ret = CUDA_SUCCESS;
++    EnterCriticalSection(&d3d11_interop_cs);
++    for (i = 0; i < count; ++i)
++    {
++        if (!(interop = get_d3d11_interop(resources[i]))) break;
++        handled = TRUE;
++        if ((*ret = d3d11_interop_unmap(interop, stream))) break;
++    }
++    LeaveCriticalSection(&d3d11_interop_cs);
++    return handled;
++}
++
++BOOL d3d11_interop_get_mapped_array(CUarray *array, CUgraphicsResource resource, unsigned int index, unsigned int level, CUresult *ret)
++{
++    struct d3d11_interop *interop;
++
++    EnterCriticalSection(&d3d11_interop_cs);
++    if ((interop = get_d3d11_interop(resource)))
++    {
++        if (!interop->mapped) *ret = CUDA_ERROR_NOT_MAPPED;
++        else if (index || level)
++        {
++            FIXME("Array index %u, mip level %u not supported.\n", index, level);
++            *ret = CUDA_ERROR_INVALID_VALUE;
++        }
++        else
++        {
++            *array = interop->array;
++            *ret = CUDA_SUCCESS;
++        }
++    }
++    LeaveCriticalSection(&d3d11_interop_cs);
++    return interop != NULL;
++}
++
++BOOL d3d11_interop_set_map_flags(CUgraphicsResource resource, unsigned int flags, CUresult *ret)
++{
++    struct d3d11_interop *interop;
++
++    EnterCriticalSection(&d3d11_interop_cs);
++    if ((interop = get_d3d11_interop(resource)))
++    {
++        interop->map_flags = flags;
++        *ret = CUDA_SUCCESS;
++    }
++    LeaveCriticalSection(&d3d11_interop_cs);
++    return interop != NULL;
++}
++
++BOOL d3d11_interop_unregister(CUgraphicsResource resource, CUresult *ret)
++{
++    struct d3d11_interop *interop;
++
++    EnterCriticalSection(&d3d11_interop_cs);
++    if ((interop = get_d3d11_interop(resource))) list_remove(&interop->entry);
++    LeaveCriticalSection(&d3d11_interop_cs);
++    if (!interop) return FALSE;
++
++    if (interop->array) wine_cuArrayDestroy(interop->array);
++    ID3D11Texture2D_Release(interop->staging);
++    ID3D11Texture2D_Release(interop->texture);
++    ID3D11Device_Release(interop->device);
++    free(interop->buffer);
++    free(interop);
++    *ret = CUDA_SUCCESS;
++    return TRUE;
+ }
+ 
+ CUresult WINAPI wine_cuD3D11CtxCreate(CUcontext* pCtx, CUdevice* pCudaDevice, unsigned int Flags, ID3D11Device* pD3DDevice)
+diff --git a/dlls/nvcuda/nvcuda.c b/dlls/nvcuda/nvcuda.c
+index 4f32e18..5c72329 100644
+--- a/dlls/nvcuda/nvcuda.c
++++ b/dlls/nvcuda/nvcuda.c
+@@ -37,6 +37,8 @@
+ #include "cuda.h"
+ #include "nvcuda.h"
+ #include "d3d11.h"
++#include "ddk/d3dkmthk.h"
++#include "nvcuda_d3d.h"
+ #include "function_mappings.h"
+ 
+ #define DEV_PTR "%llu" /* CUdeviceptr_v2 */
+@@ -2098,6 +2100,8 @@ CUresult WINAPI wine_cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource
+ CUresult WINAPI wine_cuGraphicsMapResources(unsigned int count, CUgraphicsResource *resources, CUstream hStream)
+ {
+     TRACE("(%u, %p, %p)\n", count, resources, hStream);
++    CUresult ret;
++    if (d3d11_interop_map_resources(count, resources, hStream, &ret)) return ret;
+     return pcuGraphicsMapResources(count, resources, hStream);
+ }
+ 
+@@ -2122,6 +2126,8 @@ CUresult WINAPI wine_cuGraphicsResourceGetMappedPointer_v2(CUdeviceptr *pDevPtr,
+ CUresult WINAPI wine_cuGraphicsResourceSetMapFlags(CUgraphicsResource resource, unsigned int flags)
+ {
+     TRACE("(%p, %u)\n", resource, flags);
++    CUresult ret;
++    if (d3d11_interop_set_map_flags(resource, flags, &ret)) return ret;
+     return pcuGraphicsResourceSetMapFlags(resource, flags);
+ }
+ 
+@@ -2129,18 +2135,24 @@ CUresult WINAPI wine_cuGraphicsSubResourceGetMappedArray(CUarray *pArray, CUgrap
+                                                          unsigned int arrayIndex, unsigned int mipLevel)
+ {
+     TRACE("(%p, %p, %u, %u)\n", pArray, resource, arrayIndex, mipLevel);
++    CUresult ret;
++    if (d3d11_interop_get_mapped_array(pArray, resource, arrayIndex, mipLevel, &ret)) return ret;
+     return pcuGraphicsSubResourceGetMappedArray(pArray, resource, arrayIndex, mipLevel);
+ }
+ 
+ CUresult WINAPI wine_cuGraphicsUnmapResources(unsigned int count, CUgraphicsResource *resources, CUstream hStream)
+ {
+     TRACE("(%u, %p, %p)\n", count, resources, hStream);
++    CUresult ret;
++    if (d3d11_interop_unmap_resources(count, resources, hStream, &ret)) return ret;
+     return pcuGraphicsUnmapResources(count, resources, hStream);
+ }
+ 
+ CUresult WINAPI wine_cuGraphicsUnregisterResource(CUgraphicsResource resource)
+ {
+     TRACE("(%p)\n", resource);
++    CUresult ret;
++    if (d3d11_interop_unregister(resource, &ret)) return ret;
+     return pcuGraphicsUnregisterResource(resource);
+ }
+ 
+@@ -3333,6 +3345,8 @@ CUresult WINAPI wine_cuGLGetDevices_v2(unsigned int *pCudaDeviceCount, CUdevice
+ CUresult WINAPI wine_cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource, unsigned int flags)
+ {
+     TRACE("(%p, %u)\n", resource, flags);
++    CUresult ret;
++    if (d3d11_interop_set_map_flags(resource, flags, &ret)) return ret;
+     return pcuGraphicsResourceSetMapFlags_v2(resource, flags);
+ }
+ 
+@@ -3436,12 +3450,16 @@ CUresult WINAPI wine_cuGLMapBufferObject_v2_ptds(CUdeviceptr *dptr, size_t *size
+ CUresult WINAPI wine_cuGraphicsMapResources_ptsz(unsigned int count, CUgraphicsResource *resources, CUstream hStream)
+ {
+     TRACE("(%u, %p, %p)\n", count, resources, hStream);
++    CUresult ret;
++    if (d3d11_interop_map_resources(count, resources, hStream, &ret)) return ret;
+     return pcuGraphicsMapResources_ptsz(count, resources, hStream);
+ }
+ 
+ CUresult WINAPI wine_cuGraphicsUnmapResources_ptsz(unsigned int count, CUgraphicsResource *resources, CUstream hStream)
+ {
+     TRACE("(%u, %p, %p)\n", count, resources, hStream);
++    CUresult ret;
++    if (d3d11_interop_unmap_resources(count, resources, hStream, &ret)) return ret;
+     return pcuGraphicsUnmapResources_ptsz(count, resources, hStream);
+ }
+ 
+@@ -4132,30 +4150,108 @@ CUresult WINAPI wine_cuLaunchHostFunc_ptsz(CUstream hStream, CUhostFn fn, void *
+     return pcuLaunchHostFunc_ptsz(hStream, fn, userData);
+ }
+ 
++/* Wine's D3DKMT shared resources (upstream Wine 11): the host fd behind an NT or global handle */
++#define D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE_ 0x80000002
++struct d3dkmt_get_resource_fd_wine
++{
++    HANDLE shared;
++    D3DKMT_HANDLE global;
++    int fd;
++};
++
++#define D3DKMT_ESCAPE_GET_SYNC_FD_WINE_ 0x80000003
++
++static int get_d3dkmt_fd(UINT type, HANDLE shared, D3DKMT_HANDLE global)
++{
++    struct d3dkmt_get_resource_fd_wine params = {shared, global, -1};
++    D3DKMT_ESCAPE escape = {0};
++
++    escape.Type = type;
++    escape.pPrivateDriverData = &params;
++    escape.PrivateDriverDataSize = sizeof(params);
++    if (D3DKMTEscape(&escape)) return -1;
++    return params.fd;
++}
++
++static int get_d3dkmt_resource_fd(HANDLE shared, D3DKMT_HANDLE global)
++{
++    struct d3dkmt_get_resource_fd_wine params = {shared, global, -1};
++    D3DKMT_ESCAPE escape = {0};
++
++    escape.Type = D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE_;
++    escape.pPrivateDriverData = &params;
++    escape.PrivateDriverDataSize = sizeof(params);
++    if (D3DKMTEscape(&escape)) return -1;
++    return params.fd;
++}
++
++/* a shared resource exported by name (CreateSharedHandle with a name) */
++static HANDLE open_shared_resource_name(const WCHAR *name)
++{
++    D3DKMT_OPENNTHANDLEFROMNAME open_name = {0};
++    WCHAR path[MAX_PATH * 2];
++    UNICODE_STRING str;
++    OBJECT_ATTRIBUTES attr;
++    char prefix[64];
++    unsigned int i;
++
++    snprintf(prefix, sizeof(prefix), "\\Sessions\\%u\\BaseNamedObjects\\", (unsigned int)NtCurrentTeb()->Peb->SessionId);
++    for (i = 0; prefix[i]; ++i) path[i] = prefix[i];
++    lstrcpynW(path + i, name, ARRAY_SIZE(path) - i);
++    RtlInitUnicodeString(&str, path);
++    InitializeObjectAttributes(&attr, &str, OBJ_CASE_INSENSITIVE, NULL, NULL);
++    open_name.dwDesiredAccess = GENERIC_ALL;
++    open_name.pObjAttrib = &attr;
++    if (D3DKMTOpenNtHandleFromName(&open_name))
++    {
++        ERR("Failed to open shared resource %s.\n", debugstr_w(path));
++        return NULL;
++    }
++    return open_name.hNtHandle;
++}
++
+ CUresult WINAPI wine_cuImportExternalMemory(void *extMem_out, const CUDA_EXTERNAL_MEMORY_HANDLE_DESC *memHandleDesc)
+ {
+-    TRACE("(%p, %p)\n", extMem_out, memHandleDesc);
++    TRACE("(%p, %p) type %d handle %p name %s size %s flags %#x\n", extMem_out, memHandleDesc, memHandleDesc->type,
++          memHandleDesc->handle.win32.handle, debugstr_w(memHandleDesc->handle.win32.name),
++          wine_dbgstr_longlong(memHandleDesc->size), memHandleDesc->flags);
+ 
+     CUDA_EXTERNAL_MEMORY_HANDLE_DESC linuxHandleDesc = *memHandleDesc;
+     HANDLE handle;
++    int fd;
+ 
+-    /* Linux libcuda does not work win32 handles */
++    /* Linux libcuda does not work win32 handles; D3D11/D3D12 resources are shared Vulkan memory under Wine */
+     switch (linuxHandleDesc.type)
+     {
+         case CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32:
+-            linuxHandleDesc.handle.fd = get_shared_resource_fd(linuxHandleDesc.handle.win32.handle);
++        case CU_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_HEAP:
++        case CU_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE:
++        case CU_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_RESOURCE:
++            handle = linuxHandleDesc.handle.win32.handle;
++            if (!handle && linuxHandleDesc.handle.win32.name)
++            {
++                HANDLE named = open_shared_resource_name(linuxHandleDesc.handle.win32.name);
++                fd = named ? get_d3dkmt_resource_fd(named, 0) : -1;
++                if (named) NtClose(named);
++            }
++            else if ((fd = get_d3dkmt_resource_fd(handle, 0)) < 0) fd = get_shared_resource_fd(handle);
++            linuxHandleDesc.handle.fd = fd;
+             linuxHandleDesc.type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD;
+             break;
+         case CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_KMT:
+-            handle = get_shared_resource_kmt_handle(linuxHandleDesc.handle.win32.handle);
+-            linuxHandleDesc.handle.fd = get_shared_resource_fd(handle);
++        case CU_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_RESOURCE_KMT:
++            handle = linuxHandleDesc.handle.win32.handle;
++            if ((fd = get_d3dkmt_resource_fd(NULL, HandleToULong(handle))) < 0)
++                fd = get_shared_resource_fd(get_shared_resource_kmt_handle(handle));
++            linuxHandleDesc.handle.fd = fd;
+             linuxHandleDesc.type = CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD;
++            break;
+         default:
+             break;
+     }
+ 
+     CUresult ret = pcuImportExternalMemory(extMem_out, &linuxHandleDesc);
+-    if(ret) ERR("Returned error: %d\n", ret);
++    if(ret) ERR("Returned error: %d (type %d, fd %d)\n", ret, memHandleDesc->type, linuxHandleDesc.handle.fd);
+     return ret;
+ }
+ 
+@@ -4218,13 +4314,23 @@ CUresult WINAPI wine_cuImportExternalSemaphore(CUexternalSemaphore *extSem_out,
+             linuxHandleDesc.handle.fd = get_shared_resource_fd(linuxHandleDesc.handle.win32.handle);
+             linuxHandleDesc.type = CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_TIMELINE_SEMAPHORE_FD;
+             break;
++        case CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE:
++        case CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D11_FENCE:
++        {
++            /* a shared D3D fence is a Vulkan timeline semaphore under Wine (D3DKMT sync object) */
++            int fd = get_d3dkmt_fd(D3DKMT_ESCAPE_GET_SYNC_FD_WINE_, linuxHandleDesc.handle.win32.handle, 0);
++            if (fd < 0) fd = get_shared_resource_fd(linuxHandleDesc.handle.win32.handle);
++            linuxHandleDesc.handle.fd = fd;
++            linuxHandleDesc.type = CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_TIMELINE_SEMAPHORE_FD;
++            break;
++        }
+         default:
+             break;
+     }
+ 
+     CUresult ret = pcuImportExternalSemaphore(extSem_out, &linuxHandleDesc);
+     if(!ret) semaphoreHandling(extSem_out);
+-    else ERR("Returned error: %d\n", ret);
++    else ERR("Returned error: %d (type %d)\n", ret, semHandleDesc->type);
+ 
+     return ret;
+ }
+diff --git a/dlls/nvcuda/nvcuda_d3d.h b/dlls/nvcuda/nvcuda_d3d.h
+index 9f86f3a..3bad84a 100644
+--- a/dlls/nvcuda/nvcuda_d3d.h
++++ b/dlls/nvcuda/nvcuda_d3d.h
+@@ -24,6 +24,17 @@ CUresult WINAPI wine_cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevic
+ CUresult WINAPI wine_cuDeviceGet(CUdevice *device, int ordinal);
+ CUresult WINAPI wine_cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask, CUdevice dev);
+ CUresult WINAPI wine_cuDeviceGetCount(int *count);
++CUresult WINAPI wine_cuArray3DCreate_v2(CUarray *pHandle, const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray);
++CUresult WINAPI wine_cuArrayDestroy(CUarray hArray);
++CUresult WINAPI wine_cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy);
++CUresult WINAPI wine_cuStreamSynchronize(CUstream hStream);
++CUresult WINAPI wine_cuCtxSynchronize(void);
++
++BOOL d3d11_interop_map_resources(unsigned int count, CUgraphicsResource *resources, CUstream stream, CUresult *ret);
++BOOL d3d11_interop_unmap_resources(unsigned int count, CUgraphicsResource *resources, CUstream stream, CUresult *ret);
++BOOL d3d11_interop_get_mapped_array(CUarray *array, CUgraphicsResource resource, unsigned int index, unsigned int level, CUresult *ret);
++BOOL d3d11_interop_set_map_flags(CUgraphicsResource resource, unsigned int flags, CUresult *ret);
++BOOL d3d11_interop_unregister(CUgraphicsResource resource, CUresult *ret);
+ 
+ typedef enum CUd3d11DeviceList_enum {
+     CU_D3D11_DEVICE_LIST_ALL            = 0x01, /**< The CUDA devices for all GPUs used by a D3D11 device */

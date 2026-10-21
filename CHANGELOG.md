@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- After Effects: the Composition and Layer viewers show the composition again with GPU (CUDA) rendering on
+  NVIDIA; they stayed black. AE passes CUDA frames to its Direct3D 12 viewer through CUDA interop: patches
+  0079-0081, a vkd3d-proton patch (shared buffers exportable) and a CUDA bridge patch (D3D11 interop,
+  D3D handles through Wine's D3DKMT), built by `scripts/build-gpu-deps.sh` and installed by setup.
 - Pen tablets work under XWayland without extra software (patch 0075): Photoshop (set
   `UseSystemStylus 0` in `PSUserConfig.txt`), Illustrator and After Effects follow pen pressure, and
   InDesign and Premiere get the pen as a pen. Wine now reads the tablet through XInput2 and also

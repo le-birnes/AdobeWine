@@ -1,0 +1,97 @@
+d2d1: Add the Unpremultiply effect; DrawImage() draws alpha-format effects as their input.
+
+After Effects draws its viewer overlay (guides, handles) through CLSID_D2D1UnPremultiply, which Wine did
+not register: effect creation failed. Register it like Premultiply (a stub effect), and let DrawImage()
+draw a Premultiply or Unpremultiply effect as its input: images are composited premultiplied, and
+opaque pixels are the same in both forms. Other effects still hit the FIXME.
+
+--- a/dlls/d2d1/effect.c
++++ b/dlls/d2d1/effect.c
+@@ -1821,6 +1821,23 @@
+     return d2d_effect_create_impl(effect, NULL, 0);
+ }
+ 
++static const WCHAR unpremultiply_description[] =
++L"<?xml version='1.0'?>                                                   \
++  <Effect>                                                                \
++    <Property name='DisplayName' type='string' value='Unpremultiply'/>    \
++    <Property name='Author'      type='string' value='The Wine Project'/> \
++    <Property name='Category'    type='string' value='Stub'/>             \
++    <Property name='Description' type='string' value='Unpremultiply'/>    \
++    <Inputs >                                                             \
++      <Input name='Source'/>                                              \
++    </Inputs>                                                             \
++  </Effect>";
++
++static HRESULT __stdcall unpremultiply_factory(IUnknown **effect)
++{
++    return d2d_effect_create_impl(effect, NULL, 0);
++}
++
+ static const WCHAR _3d_transform_description[] =
+ L"<?xml version='1.0'?>                                                   \
+   <Effect>                                                                \
+@@ -1897,6 +1914,7 @@
+         { &CLSID_D2D1Saturation, X2(saturation) },
+         { &CLSID_D2D1Scale, X2(scale) },
+         { &CLSID_D2D1Premultiply, X(premultiply) },
++        { &CLSID_D2D1UnPremultiply, X(unpremultiply) },
+         { &CLSID_D2D13DTransform, X2(_3d_transform) },
+ #undef X2
+ #undef X
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -3211,12 +3211,39 @@
+     ID2D1DeviceContext_SetUnitMode(iface, unit_mode);
+ }
+ 
++/* Effects only change the alpha representation (Premultiply, UnPremultiply) are drawn as their input:
++ * an image is always composited premultiplied, and opaque pixels are the same in both forms. After
++ * Effects shows its composition frames through UnPremultiply; without this the viewers stayed black. */
++static void d2d_device_context_draw_effect(ID2D1DeviceContext6 *iface, ID2D1Effect *effect,
++        const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect, D2D1_INTERPOLATION_MODE interpolation_mode,
++        D2D1_COMPOSITE_MODE composite_mode)
++{
++    ID2D1Image *input = NULL;
++    CLSID clsid;
++
++    if (FAILED(ID2D1Effect_GetValue(effect, D2D1_PROPERTY_CLSID, D2D1_PROPERTY_TYPE_CLSID, (BYTE *)&clsid, sizeof(clsid))))
++        return;
++
++    if (!IsEqualGUID(&clsid, &CLSID_D2D1Premultiply) && !IsEqualGUID(&clsid, &CLSID_D2D1UnPremultiply))
++    {
++        FIXME("Unhandled effect %s.\n", debugstr_guid(&clsid));
++        return;
++    }
++
++    ID2D1Effect_GetInput(effect, 0, &input);
++    if (!input)
++        return;
++    ID2D1DeviceContext6_DrawImage(iface, input, target_offset, image_rect, interpolation_mode, composite_mode);
++    ID2D1Image_Release(input);
++}
++
+ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *iface, ID2D1Image *image,
+         const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect, D2D1_INTERPOLATION_MODE interpolation_mode,
+         D2D1_COMPOSITE_MODE composite_mode)
+ {
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
+     ID2D1CommandList *command_list;
++    ID2D1Effect *effect;
+     ID2D1Bitmap *bitmap;
+ 
+     TRACE("iface %p, image %p, target_offset %s, image_rect %s, interpolation_mode %#x, composite_mode %#x.\n",
+@@ -3257,6 +3284,13 @@
+         return;
+     }
+ 
++    if (SUCCEEDED(ID2D1Image_QueryInterface(image, &IID_ID2D1Effect, (void **)&effect)))
++    {
++        d2d_device_context_draw_effect(iface, effect, target_offset, image_rect, interpolation_mode, composite_mode);
++        ID2D1Effect_Release(effect);
++        return;
++    }
++
+     FIXME("Unhandled image %p.\n", image);
+ }
+ 

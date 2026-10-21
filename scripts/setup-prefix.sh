@@ -58,6 +58,10 @@ done
 for d in d3d12 d3d12core; do
   cp "$DEPS"/vkd3d-proton-*/x64/$d.dll "$SYS/"; cp "$DEPS"/vkd3d-proton-*/x86/$d.dll "$SYS32/"; override $d
 done
+# After Effects' composition viewers: vkd3d-proton with shared buffers exportable and the CUDA bridge with
+# D3D11 interop (patches-deps), when built with scripts/build-gpu-deps.sh.
+GPU="$DEPS/adobewine-gpu/x64"
+[ -f "$GPU/d3d12core.dll" ] && cp "$GPU/d3d12core.dll" "$SYS/"
 if [ -f "$ADOBEWINE_SRC/lib/d3d12.dll" ]; then
   mv "$SYS/d3d12.dll" "$SYS/d3d12_vkd3d.dll"; cp "$ADOBEWINE_SRC/lib/d3d12.dll" "$SYS/d3d12.dll"
 elif command -v x86_64-w64-mingw32-gcc >/dev/null; then
@@ -91,6 +95,7 @@ fi
 # NVIDIA only: CUDA / NVENC / NVAPI / NVML bridges to the Linux driver.
 if [ -e /proc/driver/nvidia/version ]; then
   "$(ls -d "$DEPS"/nvidia-libs-*/ | head -1)/setup_nvlibs.sh" install
+  [ -f "$GPU/nvcuda.dll" ] && cp --remove-destination "$GPU/nvcuda.dll" "$SYS/nvcuda.dll"
 fi
 
 # Windows version: 11 (build 26100, patch 0018) for everything; Photoshop 27 divides by

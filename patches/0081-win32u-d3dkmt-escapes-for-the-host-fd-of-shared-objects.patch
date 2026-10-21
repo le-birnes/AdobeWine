@@ -1,0 +1,73 @@
+win32u: Add D3DKMT escapes returning the host fd of a shared resource or fence.
+
+Host APIs running in the process, such as the CUDA bridge (nvcuda, from nvidia-libs), need the host fd
+behind a D3D11/D3D12 shared resource or fence to import it (cuImportExternalMemory /
+cuImportExternalSemaphore with OPAQUE_FD / TIMELINE_SEMAPHORE_FD). Upstream Wine keeps that fd in its D3DKMT
+objects; the wine-staging IOCTL nvcuda used does not exist here. D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE and
+D3DKMT_ESCAPE_GET_SYNC_FD_WINE take the NT handle (or the global D3DKMT handle) and return a duplicate fd.
+After Effects' composition viewer receives its CUDA-rendered frames this way.
+
+--- a/include/ddk/d3dkmthk.h
++++ b/include/ddk/d3dkmthk.h
+@@ -778,8 +778,20 @@
+     /* Wine-specific escape codes */
+     D3DKMT_ESCAPE_UPDATE_RESOURCE_WINE = 0x80000000,
+     D3DKMT_ESCAPE_SET_PRESENT_RECT_WINE = 0x80000001,
++    D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE = 0x80000002,
++    D3DKMT_ESCAPE_GET_SYNC_FD_WINE = 0x80000003,
+ } D3DKMT_ESCAPETYPE;
+ 
++/* D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE / D3DKMT_ESCAPE_GET_SYNC_FD_WINE: a duplicate of the host fd behind a
++ * shared resource or synchronization object (fence), given its NT handle (shared) or its global D3DKMT handle
++ * (global), for host APIs in the same process that import it */
++typedef struct _D3DKMT_GET_RESOURCE_FD_WINE
++{
++    HANDLE        shared;
++    D3DKMT_HANDLE global;
++    int           fd;
++} D3DKMT_GET_RESOURCE_FD_WINE;
++
+ typedef struct _D3DKMT_ESCAPE
+ {
+     D3DKMT_HANDLE      hAdapter;
+--- a/dlls/win32u/d3dkmt.c
++++ b/dlls/win32u/d3dkmt.c
+@@ -492,6 +492,38 @@
+         return STATUS_SUCCESS;
+     }
+ 
++    case D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE:
++    {
++        D3DKMT_GET_RESOURCE_FD_WINE *params = desc->pPrivateDriverData;
++        D3DKMT_HANDLE local, mutex = 0, sync = 0;
++
++        if (desc->PrivateDriverDataSize != sizeof(*params)) return STATUS_INVALID_PARAMETER;
++
++        TRACE( "D3DKMT_ESCAPE_GET_RESOURCE_FD_WINE shared %p, global %#x\n", params->shared, params->global );
++
++        if (!(local = d3dkmt_open_resource( params->global, params->shared, &mutex, &sync ))) return STATUS_INVALID_HANDLE;
++        params->fd = d3dkmt_object_get_fd( local );
++        d3dkmt_destroy_resource( local );
++        d3dkmt_destroy_mutex( mutex );
++        d3dkmt_destroy_sync( sync );
++        return params->fd < 0 ? STATUS_INVALID_HANDLE : STATUS_SUCCESS;
++    }
++
++    case D3DKMT_ESCAPE_GET_SYNC_FD_WINE:
++    {
++        D3DKMT_GET_RESOURCE_FD_WINE *params = desc->pPrivateDriverData;
++        D3DKMT_HANDLE local;
++
++        if (desc->PrivateDriverDataSize != sizeof(*params)) return STATUS_INVALID_PARAMETER;
++
++        TRACE( "D3DKMT_ESCAPE_GET_SYNC_FD_WINE shared %p, global %#x\n", params->shared, params->global );
++
++        if (!(local = d3dkmt_open_sync( params->global, params->shared ))) return STATUS_INVALID_HANDLE;
++        params->fd = d3dkmt_object_get_fd( local );
++        d3dkmt_destroy_sync( local );
++        return params->fd < 0 ? STATUS_INVALID_HANDLE : STATUS_SUCCESS;
++    }
++
+     default:
+         FIXME( "(%p): stub\n", desc );
+         return STATUS_NO_MEMORY;
