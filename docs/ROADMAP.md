@@ -70,6 +70,10 @@ Dates after M2 depend on what the checklists show.
 ## What's being worked on
 
 **Now**
+- **Everything goes upstream to Wine too** (from 2026-10-23): each fix in AdobeWine is also sent to WineHQ as a
+  merge request, with a test that passes on Windows, so it reaches every Wine user and the patch list here gets
+  shorter with each Wine release. Work in AdobeWine continues meanwhile. Fixes written by contributors go upstream
+  by them or with them credited as author. Heap workarounds and other Adobe-only tweaks stay here.
 - A [showreel](https://youtu.be/3Vbzt4cGSQQ) (2026-10-23) made end to end in the seven apps under Wine: it
   exercised pen pressure, 3D text, layout, generated audio, aerender and a Premiere + Media Encoder
   export together. What it found: After Effects' memory use while previewing Cinema 4D comps (see the
