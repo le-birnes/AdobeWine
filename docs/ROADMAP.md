@@ -41,7 +41,7 @@ Pro, Media Encoder, Audition, After Effects, InDesign, Bridge.
 | Media Encoder | 10/10 | 10 / 547 | |
 | Audition | 10/10 | 10 / 498 | |
 | After Effects | partial | being inventoried | renders since 0.2.2 (Render Queue crash fixed, patch 0061); a real 300-layer comp matches the Windows render. Scripting, keyframes, panels work |
-| InDesign | not tested yet | | installs |
+| InDesign | not scored yet | | lays out and exports: styles, tables, placed PSD/AI files, PDF and PNG (used in the [showreel](https://youtu.be/3Vbzt4cGSQQ)) |
 | Bridge | opens | 0 / 149 | |
 
 The full checklists come from the Windows inventories (menus, filters, effects, presets...): 3213
@@ -70,6 +70,10 @@ Dates after M2 depend on what the checklists show.
 ## What's being worked on
 
 **Now**
+- A [showreel](https://youtu.be/3Vbzt4cGSQQ) (2026-10-23) made end to end in the seven apps under Wine: it
+  exercised pen pressure, 3D text, layout, generated audio, aerender and a Premiere + Media Encoder
+  export together. What it found: After Effects' memory use while previewing Cinema 4D comps (see the
+  README's known gaps).
 - The most-used functions per app, ranked from tutorials, as scripted and real-input tests with
   objective checks: Photoshop 40 of 40, Premiere 24 of 31 and After Effects 28 of 33 pass under
   Wine (2026-10-21);
