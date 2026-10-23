@@ -77,7 +77,7 @@ Dates after M2 depend on what the checklists show.
 - The most-used functions per app, ranked from tutorials, as scripted and real-input tests with
   objective checks: Photoshop 40 of 40, Premiere 24 of 31 and After Effects 28 of 33 pass under
   Wine (2026-10-21), Illustrator 36 of 36 (2026-10-23, including Shape Builder, Width tool, Live Paint
-  and Image Trace), InDesign 30 of 30 scripted (tables, threading, text wrap, packaging, PDF/IDML export);
+  and Image Trace), InDesign 34 of 34 (tables, threading, text wrap, packaging, PDF/IDML export, and by hand: typing, frames, the Pages panel);
   Media Encoder 15 of 17 exports (H.264, ProRes, DNxHD, audio, image sequences, GIF; HEVC can only be
   queued from the UI, on Windows too), Audition 24 of 24 (with real input: edits, effects, noise
   reduction, healing, multitrack mixdown, recording, Match Loudness); then a file-by-file
