@@ -1,7 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 - 2026-10-23
 
+- Showreel: a short film made entirely in the Adobe apps under AdobeWine, every file created,
+  rendered and exported on Linux: https://youtu.be/3Vbzt4cGSQQ. Photoshop painting with pen
+  pressure, Illustrator Blob Brush lettering and Pathfinder, an InDesign report (styles, table,
+  placed PSD and AI files, PDF export), Audition music (Generate Tones, Studio Reverb, Normalize),
+  After Effects 3D titles (Cinema 4D renderer), shape layers, particles and audio spectrum rendered
+  with aerender, and the cut, Lumetri grades and transitions in Premiere Pro, exported through
+  Media Encoder. The pen strokes come from the simulated tablet (`tools/pen.py`) and most steps were
+  scripted.
+- `tools/pen.py`: `curve` (a quadratic stroke) and `path` (one stroke through many points, pressure
+  swelling from `PEN_LO` to `PEN_HI` and back) for drawing lettering and brush strokes.
 - Illustrator's canvas works with mouse and pen while another Adobe app is open: switching apps left the
   other app's window on top in Wine's own window order, so Illustrator ignored every click and drag on
   the canvas (patch 0087, `tests/zorder/zorder.c`).

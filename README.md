@@ -2,12 +2,15 @@
 
 **Adobe Creative Cloud apps on Linux, through a patched Wine.**
 
-AdobeWine is Wine 11.18 plus 61 patches. With it, Adobe's apps install through Creative
+AdobeWine is Wine 11.18 plus 90 patches. With it, Adobe's apps install through Creative
 Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photoshop,
 Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
-for everyday use; After Effects renders real projects now but is less tested; InDesign and Bridge are next.
+for everyday use; After Effects renders real projects now but is less tested; InDesign lays out and exports; Bridge is next.
 
-> **Status: early testing (0.3.0).** Built and measured on one reference machine (Arch-based,
+**See it:** [a short showreel (1:24)](https://youtu.be/3Vbzt4cGSQQ) made entirely in these apps under
+AdobeWine, from the pen-pressure painting to the Premiere cut and the Media Encoder export.
+
+> **Status: early testing (0.3.1).** Built and measured on one reference machine (Arch-based,
 > NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
 > (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
 > [try it and report back](CONTRIBUTING.md), good or bad.
@@ -20,8 +23,8 @@ for everyday use; After Effects renders real projects now but is less tested; In
 | Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export; HEVC export 5-10% faster than Windows after correcting for the hardware |
 | Media Encoder 26.5 | Queue, presets, CUDA renderer, NVENC/NVDEC export |
 | Audition 26.5 | Recording, multitrack, effects, noise reduction, mixdown, video track |
-| After Effects 26.5 | Opens projects, scripting, keyframes, relinks moved footage; **renders** (since 0.2.2): a real 300-layer caption comp matches the Windows render (42.8-68.6 dB PSNR on 8 checked frames), 88 s vs 57 s on Windows. Less tested than the others |
-| InDesign 2026 | Installs; not tested yet |
+| After Effects 26.5 | Opens projects, scripting, keyframes, relinks moved footage, extruded 3D text with the Cinema 4D renderer; **renders** (since 0.2.2): a real 300-layer caption comp matches the Windows render (42.8-68.6 dB PSNR on 8 checked frames), 88 s vs 57 s on Windows. Less tested than the others |
+| InDesign 2026 | Layout by script and by hand: styles, tables, placed PSD and AI files, PDF and PNG export. Less tested than the others |
 | Bridge | Opens; not tested yet |
 
 How it is checked: a Windows machine lists every function of each app and saves a reference
@@ -44,6 +47,8 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   added to the Render Queue); Illustrator's PSD/SVG exports use Myriad Pro like on Windows; the apps
   follow your desktop's scale on HiDPI screens; the desktop file picker shows After Effects' "Format:"
   label.
+- **0.3.1:** the [showreel](https://youtu.be/3Vbzt4cGSQQ); Illustrator's canvas takes clicks while
+  another Adobe app is open (0087); scripting an app over COM works after it crashed and restarted (0086).
 - **0.3.0:** After Effects' composition viewer shows the comp with CUDA; Premiere's Import and Export
   modes draw, its timeline no longer deadlocks (Cikappa2904) and it starts on AMD with Mesa's
   OpenCL; pen tablets with pressure under XWayland; Creative Cloud's self-update to 6.11 completes;
@@ -51,6 +56,9 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   updating. Full list: [CHANGELOG.md](CHANGELOG.md).
 
 ### Known gaps
+- After Effects with the Cinema 4D renderer grew past 16 GB while previewing and ran a 32 GB machine out of memory; with
+  *Cache Frames When Idle* and *Multi-Frame Rendering* turned off it stayed near 6 GB. Render with
+  `aerender` for long jobs, and use `tools/sandbox.sh` so a runaway app is stopped on its own.
 - NVIDIA is the tested platform. On AMD, Photoshop works and Premiere is being tested (#15); on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
 
 ## Why this exists

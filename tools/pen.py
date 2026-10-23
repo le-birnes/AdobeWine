@@ -6,6 +6,8 @@ from the X root window, or from PEN_SCREEN=WxH. Needs write access to /dev/uinpu
   tools/pen.py stroke X1 Y1 X2 Y2 [STEPS]   pen down, pressure 0 -> max -> 0 along the line, pen up
   tools/pen.py ramp X1 Y1 X2 Y2 [STEPS]     pressure rises 0 -> max along the line (light to heavy)
   tools/pen.py flat X1 Y1 X2 Y2 [STEPS] [P] constant pressure P (0..1, default 0.8)
+  tools/pen.py curve X1 Y1 CX CY X2 Y2 [STEPS]  quadratic curve through control point CX CY, pressure 0 -> max -> 0
+  tools/pen.py path X1 Y1 X2 Y2 ...              one stroke through all points, pressure swells PEN_LO -> PEN_HI -> PEN_LO (0.2, 1)
   tools/pen.py hover X Y                    move the pen in proximity without touching
   tools/pen.py hold SECONDS                 keep the device alive (for xinput list / test-xi2)
 Several commands can be chained with ' ; ' inside one argument string."""
@@ -61,6 +63,30 @@ def line(x1, y1, x2, y2, steps, pressure_of):
     time.sleep(0.05); prox(0); syn()
 
 
+def bezier(x1, y1, cx, cy, x2, y2, steps):
+    x1, y1, cx, cy, x2, y2 = map(float, (x1, y1, cx, cy, x2, y2))
+    def at(t): return ((1 - t) ** 2 * x1 + 2 * (1 - t) * t * cx + t * t * x2, (1 - t) ** 2 * y1 + 2 * (1 - t) * t * cy + t * t * y2)
+    pos(x1, y1); prox(1); syn(); time.sleep(0.05)
+    for i in range(steps + 1):
+        t = i / steps
+        pos(*at(t)); ui.write(e.EV_ABS, e.ABS_PRESSURE, int(PMAX * max(0.02, 1 - abs(2 * t - 1))))
+        ui.write(e.EV_KEY, e.BTN_TOUCH, 1); syn()
+    ui.write(e.EV_ABS, e.ABS_PRESSURE, 0); ui.write(e.EV_KEY, e.BTN_TOUCH, 0); syn()
+    time.sleep(0.05); prox(0); syn()
+
+
+def path(pts):
+    import math, os
+    pos(*pts[0]); prox(1); syn(); time.sleep(0.05)
+    n = len(pts) - 1
+    lo, hi = float(os.environ.get('PEN_LO', 0.2)), float(os.environ.get('PEN_HI', 1.0))   # pressure at the ends, in the middle
+    for i, (x, y) in enumerate(pts):
+        pos(x, y); ui.write(e.EV_ABS, e.ABS_PRESSURE, int(PMAX * (lo + (hi - lo) * math.sin(math.pi * i / n) ** 0.7)))
+        ui.write(e.EV_KEY, e.BTN_TOUCH, 1); syn()
+    ui.write(e.EV_ABS, e.ABS_PRESSURE, 0); ui.write(e.EV_KEY, e.BTN_TOUCH, 0); syn()
+    time.sleep(0.05); prox(0); syn()
+
+
 def run(cmd):
     a = cmd.split()
     op = a[0]
@@ -69,6 +95,11 @@ def run(cmd):
         level = float(a[6]) if len(a) > 6 else 0.8
         curve = {'stroke': lambda t: 1 - abs(2 * t - 1), 'ramp': lambda t: t, 'flat': lambda t: level}[op]
         line(a[1], a[2], a[3], a[4], steps, lambda t: max(0.02, curve(t)))
+    elif op == 'curve':
+        bezier(*a[1:7], int(a[7]) if len(a) > 7 else 120)
+    elif op == 'path':
+        v = [float(t) for t in a[1:]]
+        path(list(zip(v[0::2], v[1::2])))
     elif op == 'hover':
         pos(a[1], a[2]); prox(1); syn(); time.sleep(0.3); prox(0); syn()
     elif op == 'hold':
