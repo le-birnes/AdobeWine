@@ -100,3 +100,4 @@ to WineHQ; help with that is very welcome.
 | 0087 | win32u, winex11 | A window the window manager activates goes to the top of Wine's z-order; with two Adobe apps open, Illustrator's canvas ignored every click and drag | AdobeWine |
 | 0088 | oleaut32 | Type libraries with empty strings save: InDesign's scripting type library was never written, so other programs could not script InDesign over COM (DoScript unknown) | AdobeWine |
 | 0089 | d2d1 | A path geometry whose Close failed streams nothing (its figures were freed but still counted): After Effects' Render Queue panel no longer stays blank and stops AE's idle work | AdobeWine |
+| 0090 | winex11 | A plain popup an app activates stays unmanaged: in InDesign, after double-clicking a word, Ctrl shortcuts no longer type the letter (Ctrl+B typed "B") | AdobeWine |

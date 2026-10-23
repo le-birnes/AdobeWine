@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- InDesign: after double-clicking or dragging over text, Ctrl shortcuts work again (Ctrl+Shift+B typed a "B" over
+  the word, Ctrl+A typed "a"). InDesign activates a small invisible window over the selection, and Wine handed it to
+  the window manager, which moved the keyboard focus around mid-shortcut (patch 0090).
 - After Effects' Render Queue panel works by hand: opening it (Ctrl+Alt+0, or Composition > Add to Render Queue)
   left it blank and stopped After Effects' background work, so scripts timed out. A shape the panel draws failed
   to build in Wine's Direct2D; a group made from it then read freed memory, and the fault left After Effects half

@@ -1,0 +1,29 @@
+winex11: Keep a plain owned popup unmanaged when it is only activated.
+
+"Activated windows are managed": when an application activates a window with SetActiveWindow, the SetWindowPos
+that comes with it has no SWP_NOACTIVATE, so an owned popup that was shown unmanaged (SW_SHOWNA) was remapped as a
+managed window. The window manager then focused it and the focus went back and forth between it and its owner.
+InDesign shows an invisible popup over a text selection that way and activates it; the remap made it drop the popup
+in the middle of a shortcut, so after a double-click or a drag selection Ctrl was lost: Ctrl+Shift+B typed "B" over
+the word and Ctrl+A typed "a" (2026-10-23, +win,+event traces). A plain popup (no caption, thick frame or system
+menu, with an owner, not an app window) that is already shown unmanaged now stays unmanaged when it is only
+activated. Its keyboard input still arrives, through the thread's focus window.
+
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -3292,6 +3292,15 @@
+     if ((is_managed = is_window_managed( hwnd, swp_flags, fullscreen ))) make_owner_managed( hwnd );
+ 
+     if (!(data = get_win_data( hwnd ))) return;
++    /* A plain owned popup (no caption, frame or system menu) that is already shown unmanaged stays unmanaged when
++     * it is only activated (SetActiveWindow): remapping it as a managed window lets the window manager focus it and
++     * move the focus back and forth. InDesign shows an invisible popup over a text selection with SW_SHOWNA and then
++     * activates it; the remap made it drop the popup in the middle of a shortcut, and Ctrl was lost (Ctrl+A typed
++     * "a"). The keyboard still reaches the popup: input goes to the thread's focus window. */
++    if (is_managed && !data->managed && data->desired_state.wm_state != WithdrawnState && !(swp_flags & SWP_SHOWWINDOW) &&
++        (new_style & WS_POPUP) && (new_style & WS_CAPTION) != WS_CAPTION && !(new_style & (WS_THICKFRAME | WS_SYSMENU)) &&
++        !(ex_style & WS_EX_APPWINDOW) && NtUserGetWindowRelative( hwnd, GW_OWNER ) && !fullscreen)
++        is_managed = FALSE;
+     if (is_managed) window_set_managed( data, TRUE );
+ 
+     old_rects = data->rects;

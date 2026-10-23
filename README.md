@@ -2,7 +2,7 @@
 
 **Adobe Creative Cloud apps on Linux, through a patched Wine.**
 
-AdobeWine is Wine 11.18 plus 92 patches. With it, Adobe's apps install through Creative
+AdobeWine is Wine 11.18 plus 93 patches. With it, Adobe's apps install through Creative
 Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photoshop,
 Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
 for everyday use; After Effects renders real projects now but is less tested; InDesign lays out and exports; Bridge is next.
