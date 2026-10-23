@@ -79,8 +79,8 @@ Dates after M2 depend on what the checklists show.
   Wine (2026-10-21), Illustrator 36 of 36 (2026-10-23, including Shape Builder, Width tool, Live Paint
   and Image Trace), InDesign 30 of 30 scripted (tables, threading, text wrap, packaging, PDF/IDML export);
   Media Encoder 15 of 17 exports (H.264, ProRes, DNxHD, audio, image sequences, GIF; HEVC can only be
-  queued from the UI, on Windows too), Audition 12 of 12 checked so far with real input (edits,
-  Normalize, Studio Reverb, Generate Tones, fades); then a file-by-file
+  queued from the UI, on Windows too), Audition 24 of 24 (with real input: edits, effects, noise
+  reduction, healing, multitrack mixdown, recording, Match Loudness); then a file-by-file
   comparison with the same tests run on Windows.
 - Running the inventoried functions under Wine and comparing with the Windows outputs, app by
   app (Photoshop's filters are done; Illustrator, Media Encoder and Premiere references are next).
