@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- After Effects' Render Queue panel works by hand: opening it (Ctrl+Alt+0, or Composition > Add to Render Queue)
+  left it blank and stopped After Effects' background work, so scripts timed out. A shape the panel draws failed
+  to build in Wine's Direct2D; a group made from it then read freed memory, and the fault left After Effects half
+  way through building the panel (patch 0089). Add to Render Queue, Output To and Render now work from the panel.
 - InDesign can be scripted from other programs over COM again (VBScript, Python, automation tools): it builds its
   scripting type library with Wine's CreateTypeLib2 and gives hundreds of functions an empty doc string, which made
   Wine's save fail and write nothing, so InDesign answered "unknown name" for DoScript (patch 0088,

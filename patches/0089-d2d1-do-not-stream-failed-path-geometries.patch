@@ -1,0 +1,34 @@
+d2d1: Do not stream the figures of a path geometry whose Close failed.
+
+When ID2D1GeometrySink::Close fails (triangulation gives up: "Triangle not found", or a segment that does not
+converge, 0061), the path's figures are freed but figure_count kept its value. A geometry group built from such a
+path (CreateGeometryGroup streams every source geometry into its own path) then walked figure_count entries of a
+NULL array: an access violation in d2d_path_geometry_stream, inside a window message. Wine's user callback
+handler swallowed it ("ignoring exception c0000005") and unwound out of the window procedure, so After Effects was
+left half way through building its Render Queue panel: the panel never painted and AE stopped its idle work
+(BridgeTalk scripts timed out) while the main thread waited in GetMessage (2026-10-23, +msg,+seh traces). Reset
+figure_count with the figures, and stream nothing for a path that is not closed. The Render Queue panel now
+paints, and Composition > Add to Render Queue, Output To and Render work by hand.
+
+--- a/dlls/d2d1/geometry.c
++++ b/dlls/d2d1/geometry.c
+@@ -3503,6 +3503,7 @@
+     free(geometry->u.path.figures);
+     geometry->u.path.figures = NULL;
+     geometry->u.path.figures_size = 0;
++    geometry->u.path.figure_count = 0;
+ }
+ 
+ static BOOL d2d_geometry_get_bezier_segment_idx(struct d2d_geometry *geometry, struct d2d_segment_idx *idx, BOOL next)
+@@ -4619,6 +4620,11 @@
+ {
+     unsigned int flags = 0;
+ 
++    /* A path whose Close failed has no figures left; a geometry group or a transformed
++     * geometry built from it streams nothing. */
++    if (geometry->u.path.state != D2D_GEOMETRY_STATE_CLOSED)
++        return;
++
+     if (transform)
+         return d2d_path_geometry_transformed_stream(geometry, transform, sink);
+ 
