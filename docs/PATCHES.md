@@ -98,3 +98,4 @@ to WineHQ; help with that is very welcome.
 | 0085 | opencl | clCreateCommandQueueWithProperties (OpenCL 2.0), mapped to the 1.2 call; Premiere quit after the splash on AMD (rusticl) without it (#15) | AdobeWine |
 | 0086 | rpcss | Classes registered by a COM server that was killed or crashed are dropped, so scripts reach the restarted app (0x800706ba before) | AdobeWine |
 | 0087 | win32u, winex11 | A window the window manager activates goes to the top of Wine's z-order; with two Adobe apps open, Illustrator's canvas ignored every click and drag | AdobeWine |
+| 0088 | oleaut32 | Type libraries with empty strings save: InDesign's scripting type library was never written, so other programs could not script InDesign over COM (DoScript unknown) | AdobeWine |

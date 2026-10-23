@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- InDesign can be scripted from other programs over COM again (VBScript, Python, automation tools): it builds its
+  scripting type library with Wine's CreateTypeLib2 and gives hundreds of functions an empty doc string, which made
+  Wine's save fail and write nothing, so InDesign answered "unknown name" for DoScript (patch 0088,
+  `tests/typelib/emptydoc.c`). Rerun `adobewine setup` after updating: it removes the stale registration, and
+  InDesign writes the library on its next start.
+
 ## 0.3.1 - 2026-10-23
 
 - Showreel: a short film made entirely in the Adobe apps under AdobeWine, every file created,
