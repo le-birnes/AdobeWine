@@ -81,7 +81,7 @@ Each release has `adobewine-<version>-x86_64.tar.zst`, built on Arch Linux. It c
 recent glibc it may work:
 
 ```sh
-sudo tar -C / -xf adobewine-0.2.2-x86_64.tar.zst   # from the latest release
+sudo tar -C / -xf adobewine-0.3.1-x86_64.tar.zst   # from the latest release
 sudo ln -sf /opt/adobewine/bin/adobewine /usr/local/bin/adobewine
 ```
 
@@ -132,8 +132,8 @@ Download the Creative Cloud installer from Adobe
 adobewine run ~/Downloads/Creative_Cloud_Set-Up.exe
 ```
 
-If the installer window stays white, use Adobe's
-Creative Cloud offline installer instead (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#installation-and-sign-in)).
+The web installer works since 0.2.0. If its window still stays white for you, use Adobe's
+Creative Cloud offline installer instead, and please tell us (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#installation-and-sign-in)).
 
 Sign in with your Adobe account when the installer asks. If the sign-in window stays
 blank or white, close it and run:

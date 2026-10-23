@@ -21,7 +21,7 @@ All results in [STATUS.md](STATUS.md) come from this laptop:
 | Desktop | KDE Plasma 6.7.5 on Wayland (KWin 6.7.5); Wine through XWayland 24.1.13 |
 | GStreamer | 1.28.7 (Media Foundation playback) |
 | winetricks | 20260125 |
-| Wine base | 11.18 + 53 patches; DXVK 3.1.1, vkd3d-proton 3.0.1, nvidia-libs 1.0.2 |
+| Wine base | 11.18 + 90 patches; DXVK 3.1.1, vkd3d-proton 3.0.1 (patched build from `scripts/build-gpu-deps.sh`), nvidia-libs 1.0.2 |
 
 GPU work (canvas, video effects, export) runs on the RTX 4070 through PRIME render
 offload. CUDA (Premiere's Mercury engine, Media Encoder) and NVENC/NVDEC (hardware
@@ -64,7 +64,7 @@ Results from other people's machines. Thank you! Add yours with a
 
 ## Tested in containers
 
-The release tarball (`adobewine-0.1.0-x86_64.tar.zst`) was installed in clean containers
+The release tarball (last run with `adobewine-0.1.0-x86_64.tar.zst`) was installed in clean containers
 of each distribution, with exactly the runtime dependencies listed in
 [INSTALL.md](INSTALL.md) / [INSTALL-ARCH.md](INSTALL-ARCH.md), and run as a normal user.
 Run it yourself with `tests/distro/check.sh <tarball> [image ...]` (Docker or Podman).
