@@ -23,6 +23,11 @@ export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-winemenubuilder.exe=d}"
 export FONTCONFIG_FILE="${FONTCONFIG_FILE:-$ADOBEWINE_SRC/config/fonts.conf}"
 mkdir -p "$ADOBEWINE_HOME/logs"
 export DXVK_LOG_PATH="$ADOBEWINE_HOME/logs"
+# Shader caches in one place: vkd3d-proton otherwise writes vkd3d-proton.cache into whatever folder an app was
+# started from (the home folder, a project folder), where the next start may not find it again.
+mkdir -p "$ADOBEWINE_HOME/cache/shaders"
+export VKD3D_SHADER_CACHE_PATH="${VKD3D_SHADER_CACHE_PATH:-$ADOBEWINE_HOME/cache/shaders}"
+export DXVK_STATE_CACHE_PATH="${DXVK_STATE_CACHE_PATH:-$ADOBEWINE_HOME/cache/shaders}"
 
 # Hybrid laptops (Intel/AMD iGPU + NVIDIA dGPU): render on the NVIDIA GPU.
 # Set ADOBEWINE_NVIDIA_OFFLOAD=0 to turn this off, =1 to force it.

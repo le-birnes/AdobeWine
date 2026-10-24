@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""AdobeWine: the window people see. It wraps bin/adobewine and scripts/, which stay the only place where
+things are done, so the terminal route and this window always do the same:
+  1. check   the computer can run the apps (Vulkan GPU, disk space)
+  2. prepare `adobewine setup` (fonts from a Windows partition when one is mounted)
+  3. Creative Cloud: Adobe's current installer, downloaded from Adobe at that moment, then sign-in
+  4. apps    open, close all, menu entries, report a problem
+After an AdobeWine update the prefix is refreshed once (setup can safely run again)."""
+import ctypes, glob, os, platform, re, shutil, subprocess, sys, threading, urllib.parse, urllib.request
+import gi
+gi.require_version('Gtk', '4.0'); gi.require_version('Adw', '1')
+from gi.repository import Adw, Gio, GLib, Gtk
+
+SRC = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+AW = os.path.join(SRC, 'bin', 'adobewine')
+HOME = os.environ.get('ADOBEWINE_HOME') or os.path.join(
+    os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'), 'adobewine')
+PREFIX = os.environ.get('WINEPREFIX') or os.path.join(HOME, 'prefix')
+PF = os.path.join(PREFIX, 'drive_c', 'Program Files', 'Adobe')
+VERSION = open(os.path.join(SRC, 'VERSION')).read().strip()
+STAMP = os.path.join(HOME, 'setup-version')
+REPO = os.environ.get('ADOBEWINE_REPO', 'le-birnes/AdobeWine')
+CC_URL = ('https://prod-rel-ffc-ccm.oobesaas.adobe.com/adobe-ffc-external/core/v1/wam/download'
+          '?sapCode=KCCC&productName=Creative%20Cloud&os=win')
+NEED_GB = 25
+# command, name, folder (newest year wins, as in bin/adobewine), exe inside it
+APPS = [('photoshop', 'Photoshop', 'Adobe Photoshop', 'Photoshop.exe'),
+        ('illustrator', 'Illustrator', 'Adobe Illustrator', 'Support Files/Contents/Windows/Illustrator.exe'),
+        ('premiere', 'Premiere Pro', 'Adobe Premiere Pro', 'Adobe Premiere Pro.exe'),
+        ('aftereffects', 'After Effects', 'Adobe After Effects', 'Support Files/AfterFX.exe'),
+        ('audition', 'Audition', 'Adobe Audition', 'Adobe Audition.exe'),
+        ('encoder', 'Media Encoder', 'Adobe Media Encoder', 'Adobe Media Encoder.exe')]
+CC_EXE = os.path.join(PF, 'Adobe Creative Cloud', 'ACC', 'Creative Cloud.exe')
+
+
+def installed_apps():
+    out = []
+    for cmd, name, folder, exe in APPS:
+        dirs = sorted(glob.glob(os.path.join(PF, folder + ' 20[0-9][0-9]')))
+        if dirs and os.path.isfile(os.path.join(dirs[-1], exe)):
+            out.append((cmd, f'{name} {dirs[-1][-4:]}'))
+    return out
+
+
+def gpus():
+    """Vulkan devices as [(name, vendor)], through the Vulkan loader itself (no vulkaninfo needed)."""
+    try:
+        vk = ctypes.CDLL('libvulkan.so.1')
+    except OSError:
+        return None
+    info = (ctypes.c_uint32 * 16)(); info[0] = 1                    # VkInstanceCreateInfo, sType 1, rest zero
+    inst = ctypes.c_void_p()
+    if vk.vkCreateInstance(ctypes.byref(info), None, ctypes.byref(inst)) != 0:
+        return None
+    n = ctypes.c_uint32(0)
+    vk.vkEnumeratePhysicalDevices(inst, ctypes.byref(n), None)
+    devs = (ctypes.c_void_p * n.value)()
+    vk.vkEnumeratePhysicalDevices(inst, ctypes.byref(n), devs)
+    out = []
+    for d in devs:
+        props = ctypes.create_string_buffer(2048)                      # VkPhysicalDeviceProperties: vendorID at 8,
+        vk.vkGetPhysicalDeviceProperties(ctypes.c_void_p(d), props)    # deviceType at 16, deviceName at 20
+        vendor = int.from_bytes(props.raw[8:12], 'little'); kind = int.from_bytes(props.raw[16:20], 'little')
+        name = props.raw[20:276].split(b'\0')[0].decode(errors='replace')
+        if kind != 4:                                                  # 4 = CPU (software rendering)
+            out.append((name, {0x10de: 'NVIDIA', 0x1002: 'AMD', 0x8086: 'Intel'}.get(vendor, 'other')))
+    vk.vkDestroyInstance(inst, None)
+    return out
+
+
+def windows_fonts():
+    """C:\\Windows\\Fonts of a mounted Windows partition, if there is one with Segoe UI."""
+    for pat in ('/run/media/*/*/Windows/Fonts', '/media/*/*/Windows/Fonts', '/mnt/*/Windows/Fonts', '/mnt/Windows/Fonts'):
+        for d in glob.glob(pat):
+            if glob.glob(os.path.join(d, '[sS]egoeui.ttf')):
+                return d
+    return None
+
+
+class Hub(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title='AdobeWine', default_width=560, default_height=640)
+        self.toasts = Adw.ToastOverlay()
+        tv = Adw.ToolbarView(); tv.add_top_bar(Adw.HeaderBar()); tv.set_content(self.toasts)
+        self.set_content(tv)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT)
+        self.toasts.set_child(self.stack)
+        # First start runs straight through, like a Windows installer: checks, setup, Creative Cloud's installer,
+        # ending at Adobe's sign-in. Buttons only appear when something needs the user.
+        self.auto = not os.path.isfile(STAMP)
+        self.route()
+
+    # ---- pages ---------------------------------------------------------------------------------------------------
+    def page(self, name, icon, title, text, *children):
+        old = self.stack.get_child_by_name(name)
+        if old: self.stack.remove(old)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_top=12, margin_bottom=24,
+                      margin_start=24, margin_end=24)
+        st = Adw.StatusPage(icon_name=icon, title=title, description=text, vexpand=False)
+        box.append(st)
+        for c in children: box.append(c)
+        sc = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, child=Adw.Clamp(child=box, maximum_size=520))
+        self.stack.add_named(sc, name); self.stack.set_visible_child_name(name)
+        return st
+
+    def button(self, label, cb, primary=True):
+        b = Gtk.Button(label=label, halign=Gtk.Align.CENTER)
+        b.add_css_class('pill'); b.add_css_class('suggested-action' if primary else 'flat')
+        b.connect('clicked', lambda *_: cb()); return b
+
+    def route(self):
+        """Where the user is: first start, after an update, Creative Cloud missing, or ready."""
+        ready = os.path.isfile(os.path.join(PREFIX, 'system.reg')) and os.path.isfile(STAMP)
+        if not ready:
+            self.check_page()
+        elif open(STAMP).read().strip() != VERSION:
+            self.prepare(update=True)
+        elif not os.path.isfile(CC_EXE):
+            self.cc_page()
+        else:
+            self.apps_page()
+
+    def check_page(self):
+        g = gpus(); free = shutil.disk_usage(os.path.dirname(HOME) if not os.path.isdir(HOME) else HOME).free / 1e9
+        ok = True; lines = []
+        if not g:
+            ok = False; lines.append('No graphics card with Vulkan was found. The Adobe apps need one: install your '
+                                     "distribution's graphics driver (for NVIDIA, the proprietary driver), then open this again.")
+        else:
+            lines.append('Graphics: ' + ', '.join(n for n, _ in g))
+        if free < NEED_GB:
+            ok = False; lines.append(f'Free disk space: {free:.0f} GB. About {NEED_GB} GB are needed '
+                                     '(Creative Cloud and each app take 3-10 GB).')
+        else:
+            lines.append(f'Free disk space: {free:.0f} GB')
+        f = windows_fonts()
+        lines.append('Windows fonts: found on your Windows partition, they will be used' if f else
+                     'Windows fonts: none found; AdobeWine brings a stand-in for the Segoe UI font')
+        lines.append('You need an Adobe Creative Cloud subscription. AdobeWine contains no Adobe software: '
+                     "Creative Cloud is downloaded from Adobe, and you sign in with your own account.")
+        lbl = Gtk.Label(label='\n\n'.join(lines), wrap=True, xalign=0)
+        self.page('check', 'emblem-ok-symbolic' if ok else 'dialog-warning-symbolic',
+                  'Welcome to AdobeWine' if ok else 'This computer needs something first',
+                  'Adobe Creative Cloud apps on Linux. Setting up takes 10-20 minutes and needs no terminal.'
+                  + (' Starting…' if ok and self.auto else ''),
+                  lbl, self.button('Set up', lambda: self.prepare()) if ok else
+                  self.button('Check again', self.check_page))
+        if ok and self.auto:
+            GLib.timeout_add_seconds(4, lambda: self.prepare() and False)
+
+    def prepare(self, update=False):
+        bar = Gtk.ProgressBar(show_text=True, text='Starting')
+        log = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.CHAR, height_request=200)
+        exp = Gtk.Expander(label='Details', child=Gtk.ScrolledWindow(child=log, min_content_height=200))
+        self.page('prepare', 'folder-download-symbolic', 'Updating AdobeWine' if update else 'Preparing',
+                  'Your apps and files stay as they are.' if update else
+                  'Downloading the graphics layers and setting up a Windows environment for the Adobe apps.',
+                  bar, exp)
+        tick = GLib.timeout_add(150, lambda: (bar.pulse(), True)[1])
+        args = [AW, 'setup']
+        # The desktop's scale as Wine DPI (setup reads Xft.dpi, which a sandbox may not have).
+        mons = self.get_display().get_monitors()
+        if mons.get_n_items():
+            args += ['--dpi', str(round(96 * mons.get_item(0).get_scale()))]
+        f = windows_fonts()
+        if f: args += ['--windows-fonts', f]
+
+        os.makedirs(os.path.join(HOME, 'logs'), exist_ok=True)               # report.sh attaches the newest log
+        logf = open(os.path.join(HOME, 'logs', GLib.DateTime.new_now_local().format('setup-%Y%m%d-%H%M%S.log')), 'w')
+
+        def line(s):
+            logf.write(s); logf.flush()
+            buf = log.get_buffer(); buf.insert(buf.get_end_iter(), s)
+            s = s.strip()
+            # Wine's and the drivers' own chatter stays in Details; the bar shows setup's steps.
+            if s and not re.search(r'warning|fixme|err:|wine:|MESA|^\d+:|Executing|------', s, re.I):
+                bar.set_text(s[:70])
+
+        def done(rc):
+            GLib.source_remove(tick); logf.close()
+            if rc == 0:
+                os.makedirs(HOME, exist_ok=True)
+                with open(STAMP, 'w') as fh: fh.write(VERSION + '\n')
+                self.route()
+            else:
+                bar.set_fraction(0); bar.set_text('Setup stopped (see Details)')
+                exp.set_expanded(True)
+                exp.get_parent().append(self.button('Try again', lambda: self.prepare(update)))
+                exp.get_parent().append(self.button('Report the problem', lambda: self.report('setup'), False))
+        self.run(args, line, done)
+
+    def cc_page(self):
+        bar = Gtk.ProgressBar(show_text=True, visible=False)
+        st = self.page('cc', 'system-users-symbolic', 'Creative Cloud',
+                       "AdobeWine downloads Adobe's current Creative Cloud installer from adobe.com and starts it. "
+                       'Sign in with your Adobe account when it asks.', bar)
+        box = st.get_parent()
+        go = self.button('Download and install Creative Cloud', lambda: self.install_cc(bar, go))
+        box.append(go)
+        if self.auto: self.install_cc(bar, go)
+
+    def install_cc(self, bar, go):
+        go.set_visible(False); bar.set_visible(True)
+        dest = os.path.join(HOME, 'cache', 'Creative_Cloud_Set-Up.exe')
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+        def fetch():
+            err = None
+            for _ in range(3):                    # a dropped connection ends the read early without an error
+                try:
+                    with urllib.request.urlopen(CC_URL, timeout=60) as r, open(dest + '.part', 'wb') as out:
+                        total = int(r.headers.get('Content-Length') or 0); got = 0
+                        while chunk := r.read(1 << 16):
+                            out.write(chunk); got += len(chunk)
+                            if total: GLib.idle_add(bar.set_fraction, got / total)
+                    with open(dest + '.part', 'rb') as fh: mz = fh.read(2)
+                    if (total and got != total) or mz != b'MZ':
+                        raise IOError(f'incomplete download ({got} of {total} bytes)')
+                    os.replace(dest + '.part', dest)
+                    GLib.idle_add(start); return
+                except Exception as e:
+                    err = e
+            GLib.idle_add(fail, f'The download from Adobe failed ({err}). Check the internet connection.')
+
+        def start():
+            bar.set_text('Installing: follow the Adobe window'); bar.set_fraction(1)
+            self.started = GLib.get_monotonic_time()
+            self.run([AW, 'run', dest], lambda s: None, after)
+
+        def after(rc):
+            if rc != 0 and not os.path.isfile(CC_EXE) and GLib.get_monotonic_time() - self.started < 20e6:
+                os.remove(dest)                    # could not even start: fetch it again next time
+                fail("Adobe's installer did not start. Try again; if it keeps failing, use Report a problem.")
+                return
+            # The installer starts Creative Cloud itself and may exit before it is fully installed: wait for the files.
+            def poll():
+                if os.path.isfile(CC_EXE):
+                    self.signin_page(); return False
+                return True
+            if not poll(): return
+            GLib.timeout_add_seconds(5, poll)
+            bar.set_text('Waiting for Creative Cloud to finish installing')
+
+        def fail(msg):
+            go.set_visible(True); bar.set_visible(False); self.toast(msg)
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def signin_page(self):
+        lbl = Gtk.Label(wrap=True, xalign=0, label=
+            'Sign in in the Creative Cloud window, then open its Apps page and install the apps you want. '
+            'They appear here as soon as they are installed.')
+        self.page('signin', 'avatar-default-symbolic', 'Sign in and pick your apps', None, lbl,
+                  self.button('Continue', self.apps_page),
+                  self.button('The sign-in window stays blank', self.fix_signin, False))
+
+    def fix_signin(self):
+        # bin/adobewine fix-signin: Adobe's sign-in falls back to its other (Internet Explorer engine) window.
+        subprocess.run([AW, 'off', '--force'], capture_output=True)
+        subprocess.run([AW, 'fix-signin'], capture_output=True)
+        self.toast('Switched the sign-in window; Creative Cloud opens again')
+        self.launch('cc')
+
+    def apps_page(self):
+        apps = installed_apps()
+        grp = Adw.PreferencesGroup(title='Your apps' if apps else None)
+        for cmd, name in apps:
+            row = Adw.ActionRow(title=name, activatable=True)
+            b = Gtk.Button(label='Open', valign=Gtk.Align.CENTER); b.add_css_class('suggested-action')
+            b.connect('clicked', lambda _b, c=cmd: self.launch(c))
+            row.add_suffix(b); row.set_activatable_widget(b); grp.add(row)
+        more = Adw.PreferencesGroup()
+        for title, sub, cb in (('Creative Cloud', 'Install more apps, updates, fonts', lambda: self.launch('cc')),
+                               ('Add the apps to the app menu', 'So they open like any other program', self.menu),
+                               ('Close all Adobe apps', 'Like their close buttons; they may ask to save', self.close_all),
+                               ('Report a problem', 'You see the report before anything is sent', lambda: self.report())):
+            r = Adw.ActionRow(title=title, subtitle=sub, activatable=True)
+            r.add_suffix(Gtk.Image(icon_name='go-next-symbolic')); r.connect('activated', lambda _r, c=cb: c())
+            more.add(r)
+        self.page('apps', 'applications-graphics-symbolic', 'AdobeWine',
+                  None if apps else 'No Adobe app is installed yet: open Creative Cloud and install one from its Apps page.',
+                  grp, more)
+        if not getattr(self, 'watch', None):                         # apps installed in Creative Cloud show up here
+            self.seen = apps
+            def check():
+                if installed_apps() != self.seen and self.stack.get_visible_child_name() == 'apps':
+                    self.seen = installed_apps(); self.apps_page()
+                return True
+            self.watch = GLib.timeout_add_seconds(10, check)
+
+    # ---- actions -------------------------------------------------------------------------------------------------
+    def launch(self, cmd):
+        subprocess.Popen([AW, cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.toast(f'Opening {dict((c, n) for c, n, _, _ in APPS).get(cmd, "Creative Cloud")}…')
+
+    def menu(self):
+        self.run([AW, 'launchers'], lambda s: None,
+                 lambda rc: self.toast('Added to the app menu' if rc == 0 else 'Could not add the menu entries'))
+
+    def close_all(self):
+        self.run([AW, 'off'], lambda s: None, lambda rc: self.toast(
+            'All Adobe apps are closed' if rc == 0 else 'An app is still open, maybe asking to save'))
+
+    def report(self, app='hub'):
+        d = Adw.AlertDialog(heading='Report a problem', body='In a sentence or two: what were you doing, and what went wrong?')
+        e = Gtk.Entry(); d.set_extra_child(e)
+        d.add_response('cancel', 'Cancel'); d.add_response('make', 'Next'); d.set_default_response('make')
+        d.connect('response', lambda _d, r: r == 'make' and self.report_preview(app, e.get_text()))
+        d.present(self)
+
+    def report_preview(self, app, note):
+        out = subprocess.run([os.path.join(SRC, 'scripts', 'report.sh'), '--app', app, '--note', note or '-', '--save-only'],
+                             capture_output=True, text=True).stdout
+        m = re.search(r'report saved: (.+)', out)
+        if not m: self.toast('The report could not be made'); return
+        path = m.group(1).strip(); body = open(path).read()
+        tv = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.CHAR)
+        tv.get_buffer().set_text(body)
+        d = Adw.AlertDialog(heading='This is the whole report',
+                            body='Names, paths, e-mail and IP addresses are removed. "Send" opens a GitHub page with it, '
+                                 'where you press "Submit new issue".')
+        d.set_extra_child(Gtk.ScrolledWindow(child=tv, min_content_height=320, min_content_width=480))
+        d.add_response('cancel', 'Do not send'); d.add_response('send', 'Send'); d.set_default_response('cancel')
+        d.set_response_appearance('send', Adw.ResponseAppearance.SUGGESTED)
+
+        def resp(_d, r):
+            if r != 'send': return
+            osname = platform.freedesktop_os_release().get('PRETTY_NAME', 'Linux')
+            q = urllib.parse.urlencode({'labels': 'report', 'title': f'[report] {app}: feedback on {osname}', 'body': body[:6000]})
+            Gtk.UriLauncher(uri=f'https://github.com/{REPO}/issues/new?{q}').launch(self, None, None)
+        d.connect('response', resp); d.present(self)
+
+    def run(self, args, on_line, on_done):
+        """Run a command in the background; its output lines and exit code come back on the main loop."""
+        def work():
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+            for s in p.stdout: GLib.idle_add(on_line, s)
+            GLib.idle_add(on_done, p.wait())
+        threading.Thread(target=work, daemon=True).start()
+
+    def toast(self, msg):
+        self.toasts.add_toast(Adw.Toast(title=msg, timeout=4))
+
+
+def main():
+    app = Adw.Application(application_id=os.environ.get('FLATPAK_ID', 'io.github.le_birnes.AdobeWine'),
+                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+    app.connect('activate', lambda a: (a.get_active_window() or Hub(a)).present())
+    return app.run(sys.argv[:1])
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -84,14 +84,18 @@ for everyone else.
 
 ## Install
 
+- **Any distribution, the easy way:** download `CCINSTALLER.flatpak` from the
+  [latest release](../../releases/latest), double-click it, click Install, then Open. It sets
+  everything up and stops at Adobe's sign-in; no terminal needed. Ubuntu needs Flatpak first
+  (see [docs/INSTALL.md](docs/INSTALL.md)).
 - **Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro, Garuda):** the AUR packages
   `adobewine` / `adobewine-bin` are being submitted. Until then, build the same package from
   this repository (see [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md)).
 - **Gentoo:** Portage packages in the `::snakebyte` overlay (`app-emulation/adobewine`,
   maintained outside this project). See [docs/INSTALL-GENTOO.md](docs/INSTALL-GENTOO.md).
-- **Any other distribution:** build from source. See [docs/INSTALL.md](docs/INSTALL.md).
+- **Any other distribution, from source:** see [docs/INSTALL.md](docs/INSTALL.md).
 
-Once installed, the short version is:
+Without the Flatpak, once installed, the short version is:
 
 ```sh
 adobewine setup --windows-fonts /path/to/Windows/Fonts  # create the prefix (once)

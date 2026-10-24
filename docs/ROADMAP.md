@@ -70,6 +70,9 @@ Dates after M2 depend on what the checklists show.
 ## What's being worked on
 
 **Now**
+- **One file for every distribution** (from 2026-10-24): `CCINSTALLER.flatpak` installs with a double-click on
+  Fedora, Mint, Ubuntu, Debian, openSUSE, Arch and the rest, sets everything up and stops at Adobe's sign-in. No
+  terminal and no Wine build. Next: updates through the software center, then Flathub.
 - **Everything goes upstream to Wine too** (from 2026-10-23): each fix in AdobeWine is also sent to WineHQ as a
   merge request, with a test that passes on Windows, so it reaches every Wine user and the patch list here gets
   shorter with each Wine release. Work in AdobeWine continues meanwhile. Fixes written by contributors go upstream
@@ -114,7 +117,8 @@ Dates after M2 depend on what the checklists show.
 - **AMD and Intel GPUs:** the biggest gap. Run `adobewine report` and send a
   [compatibility report](../../../issues/new?template=compatibility.yml), even if "it starts
   and crashes" is all there is to say.
-- **Other distributions and Wayland sessions:** same, a report tells us more than you think.
+- **Other distributions and Wayland sessions:** try `CCINSTALLER.flatpak` and use its "Report a problem" button;
+  a report tells us more than you think.
 - **Your real workflow:** if you use an app daily, tell us what you do in it and what breaks.
   Real use finds things a checklist misses.
 - **Patches:** any of the "Next" items above, or anything you hit. Every patch here starts

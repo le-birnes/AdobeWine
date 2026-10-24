@@ -1,5 +1,31 @@
 # Installing AdobeWine
 
+## The easy way: one file (any distribution)
+
+1. Download **CCINSTALLER.flatpak** from the [latest release](https://github.com/le-birnes/AdobeWine/releases/latest).
+2. Double-click it. Your app store opens (GNOME Software, KDE Discover, Mint's Software Manager): click **Install**.
+3. Click **Open** (or find **AdobeWine** in your app menu). Everything else happens by itself: it checks your
+   computer, sets up, downloads Adobe's Creative Cloud installer from adobe.com and starts it. It ends at Adobe's
+   sign-in. Sign in, then install your apps from Creative Cloud; they appear in the AdobeWine window.
+
+You need an Adobe Creative Cloud subscription and about 25 GB of free space. AdobeWine contains no Adobe software
+and is not affiliated with Adobe.
+
+If double-clicking does nothing, your system has no Flatpak yet (Ubuntu ships without it). Install it once:
+
+```sh
+sudo apt install flatpak gnome-software-plugin-flatpak    # Ubuntu, Debian
+```
+
+or install AdobeWine from a terminal on any distribution that has Flatpak:
+
+```sh
+flatpak install --user ~/Downloads/CCINSTALLER.flatpak
+```
+
+The rest of this page is for people who prefer a native package or want to build AdobeWine themselves.
+
+
 This guide is for any Linux distribution. On Arch Linux or an Arch-based distribution
 (CachyOS, EndeavourOS, Manjaro, Garuda), use the AUR package instead:
 [INSTALL-ARCH.md](INSTALL-ARCH.md). On Gentoo, use the Portage packages:

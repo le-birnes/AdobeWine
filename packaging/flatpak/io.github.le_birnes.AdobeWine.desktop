@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AdobeWine
+Comment=Adobe Creative Cloud apps on Linux: set up, open, update
+Exec=adobewine-hub
+Icon=io.github.le_birnes.AdobeWine
+Terminal=false
+Categories=Graphics;AudioVideo;
+Keywords=Photoshop;Illustrator;Premiere;After Effects;Audition;Media Encoder;Creative Cloud;Wine;
+StartupNotify=true

@@ -10,7 +10,7 @@ fetch() {  # fetch <url> <sha256>
     mv "$f.part" "$f"
   fi
   echo "$2  $f" | sha256sum -c --quiet || { echo "checksum mismatch: $f" >&2; rm -f "$f"; exit 1; }
-  tar -xf "$f"
+  tar --no-same-owner -xf "$f"  # as root (containers) tar would try to keep the packer's uid
 }
 # DXVK: Direct3D 8-11 -> Vulkan
 fetch https://github.com/doitsujin/dxvk/releases/download/v3.1.1/dxvk-3.1.1.tar.gz \

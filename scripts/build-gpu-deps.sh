@@ -8,8 +8,11 @@ DEPS=${1:-${ADOBEWINE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/adobewine}/deps
 SRC=$DEPS/src
 OUT=$DEPS/adobewine-gpu/x64
 mkdir -p "$SRC" "$OUT"
-[ -x "$DEPS/venv/bin/meson" ] || { python3 -m venv "$DEPS/venv"; "$DEPS/venv/bin/pip" -q install meson ninja; }
-export PATH="$DEPS/venv/bin:$PATH"
+# meson and ninja from the system when it has them (the Flatpak SDK does), else a venv
+if ! command -v meson >/dev/null || ! command -v ninja >/dev/null; then
+  [ -x "$DEPS/venv/bin/meson" ] || { python3 -m venv "$DEPS/venv"; "$DEPS/venv/bin/pip" -q install meson ninja; }
+  export PATH="$DEPS/venv/bin:$PATH"
+fi
 
 # vkd3d-proton 3.0.1
 V=$SRC/vkd3d-proton-adobewine

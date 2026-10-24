@@ -1,0 +1,185 @@
+# AdobeWine as one Flatpak: Wine 11.18 + patches/, the patched GPU layers (patches-deps), the Windows-side helpers,
+# the tools setup needs, and the first-run window (hub/). Build from the repository root:
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/io.github.le_birnes.AdobeWine.yml
+# DXVK, vkd3d-proton, nvidia-libs, wine-gecko/mono and the core fonts are downloaded by `adobewine setup` on first
+# start, with the checksums in scripts/fetch-deps.sh, exactly as outside the Flatpak.
+id: io.github.le_birnes.AdobeWine
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.mingw-w64
+command: adobewine-hub
+# H.264/HEVC/AAC for Wine's FFmpeg and GStreamer paths come with the runtime (its codecs-extra extension).
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --allow=multiarch                # modify_ldt: Wine's WoW64 runs 32-bit code (syswow64 stayed empty without it)
+  - --socket=x11                     # Wine's X11 driver (XWayland on Wayland desktops), see setup-prefix.sh
+  - --socket=wayland
+  - --socket=pulseaudio              # PipeWire and PulseAudio
+  - --device=all                     # GPU (incl. /dev/nvidia*), /dev/ntsync, pen tablets, webcams, audio interfaces
+  - --filesystem=home                # creators open and save files anywhere in their home
+  - --filesystem=/run/media          # USB drives and other disks
+  - --filesystem=/media
+  - --filesystem=/mnt
+  - --filesystem=xdg-data/applications:create   # `adobewine launchers`: the apps in the desktop menu
+  - --filesystem=xdg-data/icons:create
+  - --talk-name=org.freedesktop.Notifications
+  - --env=ADOBEWINE_LINK_DLLS=1       # setup links Wine's own DLLs into the prefix (read-only /app): saves ~1.8 GB per user
+  - --env=ADOBEWINE_EXEC=flatpak run --command=adobewine io.github.le_birnes.AdobeWine
+  - --env=PATH=/app/bin:/app/adobewine/runtime/bin:/usr/bin
+build-options:
+  append-path: /usr/lib/sdk/mingw-w64/bin
+modules:
+  - name: opencl-headers
+    buildsystem: cmake-ninja
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/OpenCL-Headers.git
+        tag: v2026.05.29
+        commit: 657b6d0f74eff94f31e567ab1f67159b0997048a
+    cleanup: ['*']
+
+  - name: opencl-icd-loader
+    buildsystem: cmake-ninja
+    config-opts: [-DBUILD_TESTING=OFF]
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/OpenCL-ICD-Loader.git
+        tag: v2026.05.29
+        commit: 9417a37f3b8cbf2421560724bae452d53ef01a31
+    cleanup: [/include, /lib/pkgconfig, /share]
+
+  - name: cabextract                 # winetricks
+    sources:
+      - type: archive
+        url: https://www.cabextract.org.uk/cabextract-1.11.tar.gz
+        sha256: b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6
+    cleanup: [/share]
+
+  - name: 7zip                       # application icons for the menu entries (scripts/install-launchers.sh)
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 7zz /app/bin/7zz
+      - ln -sf 7zz /app/bin/7z
+    sources:
+      - type: archive
+        url: https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-x64.tar.xz
+        sha256: 22cf82fcc6eb7474f1d5bb4f02c0f8ebd573a718089d6833dc30f8350a3b232e
+        strip-components: 0
+
+  - name: winetricks
+    buildsystem: simple
+    build-commands: [install -Dm755 winetricks /app/bin/winetricks]
+    sources:
+      - type: file
+        url: https://raw.githubusercontent.com/Winetricks/winetricks/20260125/src/winetricks
+        sha256: 431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b
+
+  - name: python-modules             # Pillow (menu icons), python-xlib (bin/adobewine's stuck-app check)
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-build-isolation --find-links=. --prefix=/app pillow python-xlib
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/1d/f2/1371707ce438ba9a43f9d24089828494ec6f9396e28cd7903aa704dd6306/pillow-13.0.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: e91c2b1cbeae768c98752e67e717e283d68dae45717b41f2d91eaee648e37b7d
+      - type: file
+        url: https://files.pythonhosted.org/packages/fc/b8/ff33610932e0ee81ae7f1269c890f697d56ff74b9f5b2ee5d9b7fa2c5355/python_xlib-0.33-py2.py3-none-any.whl
+        sha256: c3534038d42e0df2f1392a1b30a15a4ff5fdc2b86cfa94f072bf11b10a164398
+      - type: file
+        url: https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl
+        sha256: 4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+
+  - name: selawik                    # Microsoft's open fallback for Segoe UI (OFL): setup makes Segoe UI from it
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 -t /app/share/fonts/selawik *.ttf
+    sources:
+      - type: archive
+        url: https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip
+        sha256: 3f62c51e05e3b5a1e6241cf92a371f0be2ea1183aa87b30718bbd40832a8d423
+        strip-components: 0
+
+  - name: wine                       # Wine 11.18 + AdobeWine's patches (WoW64: no 32-bit runtime needed)
+    buildsystem: simple
+    build-options:
+      env:
+        CROSSCFLAGS: -O2 -pipe
+        CROSSLDFLAGS: -Wl,-O1
+    build-commands:
+      # Quoted: an unquoted ": " made YAML read this line as a mapping, and flatpak-builder skipped it silently.
+      - 'n=0; for p in aw/patches/*.patch; do patch -Np1 -i "$p" >/dev/null || { echo "patch failed - $p"; exit 1; }; n=$((n+1)); done; echo "applied $n patches"; [ "$n" -gt 0 ]'
+      - mkdir -p build && cd build && ../configure --prefix=/app/adobewine/runtime --disable-tests
+          --enable-archs=x86_64,i386 --without-cups --without-pcap --without-sane --without-gphoto
+          --without-oss --without-capi
+      - make -C build -j$FLATPAK_BUILDER_N_JOBS
+      - make -C build install
+    sources:
+      - type: archive
+        url: https://dl.winehq.org/wine/source/11.x/wine-11.18.tar.xz
+        sha256: c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4
+      - type: dir
+        path: ../../patches
+        dest: aw/patches
+    cleanup:                       # build-only parts (applied after every module, so nvcuda still builds)
+      - /adobewine/runtime/include
+      - /adobewine/runtime/share/man
+      - /adobewine/runtime/share/applications
+      - /adobewine/runtime/lib/wine/*/*.a
+      - /adobewine/runtime/bin/winegcc
+      - /adobewine/runtime/bin/wineg++
+      - /adobewine/runtime/bin/winebuild
+      - /adobewine/runtime/bin/winecpp
+      - /adobewine/runtime/bin/widl
+      - /adobewine/runtime/bin/wmc
+      - /adobewine/runtime/bin/wrc
+      - /adobewine/runtime/bin/winedump
+      - /adobewine/runtime/bin/function_grep.pl
+      - /adobewine/runtime/bin/winemaker
+
+  - name: adobewine-gpu              # patched vkd3d-proton (d3d12core) and nvcuda for After Effects' viewers
+    buildsystem: simple
+    build-commands:
+      # Flatpak's host CFLAGS/LDFLAGS would leak into the MinGW cross build (as makepkg's do in the AUR package).
+      - env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS PATH=/app/adobewine/runtime/bin:$PATH bash scripts/build-gpu-deps.sh "$PWD/deps"
+      - install -Dm644 -t /app/adobewine/lib/adobewine-gpu/x64 deps/adobewine-gpu/x64/*.dll
+    sources:
+      - type: file
+        path: ../../scripts/build-gpu-deps.sh
+        dest: scripts
+      - type: git
+        url: https://github.com/HansKristian-Work/vkd3d-proton.git
+        tag: v3.0.1
+        commit: 3b10bd7a7ec6a7347e616cf8bea59333afec2255
+        dest: deps/src/vkd3d-proton-adobewine
+      - type: patch
+        path: ../../patches-deps/vkd3d-proton-3.0.1-export-shared-buffers.patch
+        dest: deps/src/vkd3d-proton-adobewine
+      - type: git
+        url: https://github.com/SveSop/nvcuda.git
+        commit: d4c0fca9c570fa47fcf16a527e292d1e64772af6
+        dest: deps/src/nvcuda-adobewine
+      - type: patch
+        path: ../../patches-deps/nvcuda-d4c0fca-d3d11-interop-and-wine-d3dkmt-handles.patch
+        dest: deps/src/nvcuda-adobewine
+
+  - name: adobewine                  # the scripts, prebuilt Windows helpers, the window and its desktop entry
+    buildsystem: simple
+    build-commands:
+      - x86_64-w64-mingw32-gcc -O2 -shared -o d3d12.dll shims/d3d12/d3d12shim.c shims/d3d12/d3d12.def -Wl,--enable-stdcall-fixup
+      - x86_64-w64-mingw32-gcc -O2 -o winclose.exe tools/winclose/winclose.c
+      - x86_64-w64-mingw32-gcc -O2 -o d3d12fl.exe tools/d3d12fl/d3d12fl.c
+      - mkdir -p /app/adobewine/lib
+      - cp -r bin config scripts shims tools hub README.md LICENSE VERSION /app/adobewine/
+      - install -m644 d3d12.dll winclose.exe d3d12fl.exe /app/adobewine/lib/
+      - ln -sf /app/adobewine/bin/adobewine /app/bin/adobewine
+      - ln -sf /app/adobewine/hub/adobewine-hub /app/bin/adobewine-hub
+      - install -Dm644 packaging/flatpak/io.github.le_birnes.AdobeWine.desktop -t /app/share/applications
+      - install -Dm644 packaging/flatpak/io.github.le_birnes.AdobeWine.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 packaging/flatpak/io.github.le_birnes.AdobeWine.svg -t /app/share/icons/hicolor/scalable/apps
+    sources:
+      - type: dir
+        path: ../..
+        skip: [packaging/aur, build-flatpak, .flatpak-builder, .git, tests]

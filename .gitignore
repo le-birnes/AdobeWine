@@ -4,3 +4,7 @@
 packaging/aur/*/src/
 packaging/aur/*/pkg/
 packaging/aur/*/*.tar.*
+build-flatpak/
+.flatpak-builder/
+flatpak-repo/
+CCINSTALLER.flatpak

@@ -25,21 +25,26 @@ ls -d "$DEPS"/dxvk-*/ >/dev/null 2>&1 || "$ADOBEWINE_SRC/scripts/fetch-deps.sh"
 SYS="$WINEPREFIX/drive_c/windows/system32"
 SYS32="$WINEPREFIX/drive_c/windows/syswow64"
 
-[ -f "$WINEPREFIX/system.reg" ] || wineboot -i
-wineserver -w
-
 # Browser engine (wine-gecko) and .NET replacement (wine-mono): the Creative Cloud
-# installer's pages stay on "Loading..." without gecko.
+# installer's pages stay on "Loading..." without gecko. They are downloaded before the first boot
+# and put where Wine looks for them (~/.cache/wine), so wineboot installs and registers them
+# silently instead of asking in a dialog.
 SHARE="$ADOBEWINE_HOME/cache"
-mkdir -p "$SHARE/gecko" "$SHARE/mono"
+WINECACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wine"
+mkdir -p "$SHARE/gecko" "$SHARE/mono" "$WINECACHE"
 for a in x86 x86_64; do
   f="$SHARE/gecko/wine-gecko-2.47.4-$a.msi"
   [ -f "$f" ] || curl -fsSL -o "$f" "https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-$a.msi"
 done
-[ -d "$SYS/gecko/2.47.4" ] || { wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86_64.msi" /qn; wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86.msi" /qn; }
 f="$SHARE/mono/wine-mono-11.3.0-x86.msi"
 [ -f "$f" ] || curl -fsSL -o "$f" "https://dl.winehq.org/wine/wine-mono/11.3.0/wine-mono-11.3.0-x86.msi"
-[ -d "$WINEPREFIX/drive_c/windows/mono" ] || wine msiexec /i "$f" /qn
+for f in "$SHARE"/gecko/*.msi "$SHARE"/mono/*.msi; do [ -e "$WINECACHE/${f##*/}" ] || ln -s "$f" "$WINECACHE/"; done
+
+[ -f "$WINEPREFIX/system.reg" ] || wineboot -i
+wineserver -w
+# Older prefixes, or a first boot that could not install them: install them directly.
+[ -d "$SYS/gecko/2.47.4" ] || { wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86_64.msi" /qn; wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86.msi" /qn; }
+[ -d "$WINEPREFIX/drive_c/windows/mono" ] || wine msiexec /i "$SHARE/mono/wine-mono-11.3.0-x86.msi" /qn
 
 # Microsoft's shader compiler (Audition compiles HLSL at run time) and the core fonts
 # (the Creative Cloud renderer crashes without real Windows fonts).
@@ -111,7 +116,7 @@ wine reg add 'HKCU\Software\Wine\AppDefaults\msedgewebview2.exe\DllOverrides' /v
 # rebuilds the file only when the registration is gone. A registration whose file is missing is removed here, so
 # InDesign writes the library on its next start and can be scripted over COM (DoScript).
 for tl in '{D95F7B72-4717-4D59-804E-31D7026366F9}' '{268860D4-B7CB-4DEF-A5D6-F7F9F9261D11}'; do
-    f=$(wine reg query "HKCR\\TypeLib\\$tl\\1.0\\0\\win32" /ve 2>/dev/null | sed -n 's/.*REG_SZ[[:space:]]*//p' | tr -d '\r')
+    f=$(wine reg query "HKCR\\TypeLib\\$tl\\1.0\\0\\win32" /ve 2>/dev/null | sed -n 's/.*REG_SZ[[:space:]]*//p' | tr -d '\r') || true  # not registered (fresh prefix): pipefail would end setup here
     [ -n "$f" ] && [ ! -f "$(winepath -u "$f" 2>/dev/null)" ] && wine reg delete "HKCR\\TypeLib\\$tl" /f >/dev/null 2>&1
 done
 # X11 driver (through XWayland on Wayland desktops), and no window-manager decorations:
@@ -120,7 +125,7 @@ wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
 wine reg add 'HKCU\Software\Wine\X11 Driver' /v Decorated /d N /f >/dev/null
 wine reg add 'HKCU\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f >/dev/null
 # HiDPI: Wine draws at 96 DPI unless told otherwise, so on a 2x or 1.5x desktop Adobe's UI is tiny.
-[ -n "$DPI" ] || DPI=$(xrdb -query 2>/dev/null | awk '/^Xft\.dpi:/ {printf "%d", $2}')
+[ -n "$DPI" ] || DPI=$(xrdb -query 2>/dev/null | awk '/^Xft\.dpi:/ {printf "%d", $2}') || true  # no xrdb (Flatpak runtime): pipefail would end setup
 case "$DPI" in ''|*[!0-9]*) DPI=96 ;; esac
 [ "$DPI" -lt 96 ] && DPI=96; [ "$DPI" -gt 288 ] && DPI=288
 wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d "$DPI" /f >/dev/null
@@ -145,5 +150,21 @@ elif ! ls "$WINEPREFIX/drive_c/windows/Fonts/"segoeui.ttf >/dev/null 2>&1; then
   fi
 fi
 "$ADOBEWINE_SRC/scripts/register-fonts.sh"
+# ADOBEWINE_LINK_DLLS=1 (the Flatpak sets it): Wine's own DLLs in system32/syswow64 become links to the runtime
+# instead of copies, as Proton does (about 1.8 GB less per prefix). Only files identical to the runtime's are
+# linked, so DXVK, vkd3d-proton, nvidia-libs and winetricks' native DLLs stay real files. Meant for a runtime
+# nobody writes to (the Flatpak's /app); after a runtime update the links simply point at the new files.
+if [ "${ADOBEWINE_LINK_DLLS:-0}" = 1 ]; then
+  wineserver -w
+  n=0
+  for pair in "system32:x86_64-windows" "syswow64:i386-windows"; do
+    dst="$WINEPREFIX/drive_c/windows/${pair%%:*}" src="$ADOBEWINE_RUNTIME/lib/wine/${pair##*:}"
+    for f in "$src"/*; do
+      t="$dst/${f##*/}"
+      [ -f "$t" ] && [ ! -L "$t" ] && cmp -s "$f" "$t" && ln -sf "$f" "$t" && n=$((n + 1))
+    done
+  done
+  echo "linked $n Wine DLLs into the prefix instead of copies"
+fi
 wineserver -w
 echo "prefix ready: $WINEPREFIX ($(wine --version))"
