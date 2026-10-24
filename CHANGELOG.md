@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Illustrator: floating panels (Transform, Color, Align...) show again; they were invisible and blocked clicks on
+  the part of the canvas they covered (patch 0091).
 - InDesign: after double-clicking or dragging over text, Ctrl shortcuts work again (Ctrl+Shift+B typed a "B" over
   the word, Ctrl+A typed "a"). InDesign activates a small invisible window over the selection, and Wine handed it to
   the window manager, which moved the keyboard focus around mid-shortcut (patch 0090).

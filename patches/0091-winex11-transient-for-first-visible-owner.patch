@@ -1,0 +1,28 @@
+winex11: Make a window transient for its first visible owner.
+
+A window owned by a window that is never shown got WM_TRANSIENT_FOR on that owner's unmapped X window, and the window
+manager gives a window transient for an unmapped one no stacking relation. Illustrator's floating panels (layered
+OWL.Dock windows) are owned by an invisible "Palette Layer" window: KWin stacked the document window above them while
+Wine kept them above it in X, so under XWayland the panels were drawn hidden behind the document yet took the clicks
+over it (Transform, Color: invisible, and parts of the canvas ignored the mouse; 2026-10-23). Walk up the owner chain
+to the first visible window, as Windows keeps owned windows above their owners.
+
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1123,6 +1123,16 @@
+     if (owner)
+     {
+         owner = NtUserGetAncestor( owner, GA_ROOT );
++        /* An owner that is never shown has no mapped X window, and the window manager gives a window that is
++         * transient for an unmapped one no stacking relation: it stacked the owner's owner above it while Wine kept
++         * it above in X, so it was hidden yet took the clicks (Illustrator's floating panels are owned by an
++         * invisible "Palette Layer" window). Use the first visible window up the owner chain. */
++        while (!(NtUserGetWindowLongW( owner, GWL_STYLE ) & WS_VISIBLE))
++        {
++            HWND next = NtUserGetWindowRelative( owner, GW_OWNER );
++            if (!next) break;
++            owner = NtUserGetAncestor( next, GA_ROOT );
++        }
+         owner_win = X11DRV_get_whole_window( owner );
+     }
+ 
