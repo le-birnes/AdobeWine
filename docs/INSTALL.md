@@ -2,7 +2,7 @@
 
 ## The easy way: one file (any distribution)
 
-1. Download **CCINSTALLER.flatpak** from the [latest release](https://github.com/le-birnes/AdobeWine/releases/latest).
+1. Download **CCINSTALLER.flatpak** from the [releases page](https://github.com/le-birnes/AdobeWine/releases) (the newest is at the top).
 2. Double-click it. Your app store opens (GNOME Software, KDE Discover, Mint's Software Manager): click **Install**.
 3. Click **Open** (or find **AdobeWine** in your app menu). Everything else happens by itself: it checks your
    computer, sets up, downloads Adobe's Creative Cloud installer from adobe.com and starts it. It ends at Adobe's

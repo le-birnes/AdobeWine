@@ -89,7 +89,7 @@ for everyone else.
 ## Install
 
 - **Any distribution, the easy way:** download `CCINSTALLER.flatpak` from the
-  [latest release](../../releases/latest), double-click it, click Install, then Open. It sets
+  [latest release](../../releases), double-click it, click Install, then Open. It sets
   everything up and stops at Adobe's sign-in; no terminal needed. Ubuntu needs Flatpak first
   (see [docs/INSTALL.md](docs/INSTALL.md)).
 - **Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro, Garuda):** the AUR packages
