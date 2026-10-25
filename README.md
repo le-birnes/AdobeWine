@@ -10,7 +10,7 @@ for everyday use; After Effects renders real projects now but is less tested; In
 **See it:** [a short showreel (1:24)](https://youtu.be/3Vbzt4cGSQQ) made entirely in these apps under
 AdobeWine, from the pen-pressure painting to the Premiere cut and the Media Encoder export.
 
-> **Status: early testing (0.3.1).** Built and measured on one reference machine (Arch-based,
+> **Status: early testing (0.4.0).** Built and measured on one reference machine (Arch-based,
 > NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
 > (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
 > [try it and report back](CONTRIBUTING.md), good or bad.
@@ -47,6 +47,10 @@ sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
   added to the Render Queue); Illustrator's PSD/SVG exports use Myriad Pro like on Windows; the apps
   follow your desktop's scale on HiDPI screens; the desktop file picker shows After Effects' "Format:"
   label.
+- **0.4.0:** one file for every distribution, `CCINSTALLER.flatpak`: double-click, Install, Open, and it
+  sets up and stops at Adobe's sign-in (tested on Fedora, Ubuntu, Debian, Mint, openSUSE and Arch);
+  Illustrator's floating panels (0091), InDesign Ctrl shortcuts after a mouse selection (0090), After
+  Effects' Render Queue panel (0089), InDesign scriptable over COM (0088).
 - **0.3.1:** the [showreel](https://youtu.be/3Vbzt4cGSQQ); Illustrator's canvas takes clicks while
   another Adobe app is open (0087); scripting an app over COM works after it crashed and restarted (0086).
 - **0.3.0:** After Effects' composition viewer shows the comp with CUDA; Premiere's Import and Export

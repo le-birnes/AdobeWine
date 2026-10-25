@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-10-24
 
 - **One file for every distribution: `CCINSTALLER.flatpak`.** Double-click it, click Install in your app store, then
   Open. A small window checks the computer (Vulkan GPU, disk space), sets everything up with a progress bar,
@@ -11,7 +11,7 @@
   stand-in, winetricks and the rest, on the GNOME runtime from Flathub. Recipe: `packaging/flatpak`, build with
   `packaging/flatpak/make-bundle.sh`; distribution check: `tests/distro/flatpak-check.sh`.
 - Setup no longer stops on a brand-new prefix: the InDesign scripting check added for 0088 ended setup when
-  InDesign had never been installed (unreleased since 0.3.1), nor where `xrdb` is missing (the desktop's scale
+  InDesign had never been installed (new in 0.3.1), nor where `xrdb` is missing (the desktop's scale
   then cannot be read and 96 DPI is used).
 - Setup downloads Gecko and Mono before Wine's first boot and puts them where Wine looks for them, so Wine installs
   and registers them silently instead of asking in a dialog. Adobe's current web installer (5.3.5.13) needs the
