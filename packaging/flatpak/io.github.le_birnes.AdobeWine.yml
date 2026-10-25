@@ -122,6 +122,7 @@ modules:
         sha256: c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4
       - type: git                  # the patches, from the last commit: cached by commit (a dir source never is)
         path: ../..
+        branch: main
         dest: aw
     cleanup:                       # build-only parts (applied after every module, so nvcuda still builds)
       - /adobewine/runtime/include
