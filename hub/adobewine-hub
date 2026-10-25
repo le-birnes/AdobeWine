@@ -6,7 +6,7 @@ things are done, so the terminal route and this window always do the same:
   3. Creative Cloud: Adobe's current installer, downloaded from Adobe at that moment, then sign-in
   4. apps    open, close all, menu entries, report a problem
 After an AdobeWine update the prefix is refreshed once (setup can safely run again)."""
-import ctypes, glob, os, platform, re, shutil, subprocess, sys, threading, urllib.parse, urllib.request
+import ctypes, glob, os, platform, re, shutil, subprocess, sys, threading, urllib.parse
 import gi
 gi.require_version('Gtk', '4.0'); gi.require_version('Adw', '1')
 from gi.repository import Adw, Gio, GLib, Gtk
@@ -206,13 +206,15 @@ class Hub(Adw.ApplicationWindow):
 
         def fetch():
             err = None
-            for _ in range(3):                    # a dropped connection ends the read early without an error
+            # curl, not urllib: Adobe's server ends about half of urllib's downloads at ~1 MB without an error
+            # (2026-10-24); curl got all of them. The server does not resume (no Range), so a short file is fetched again.
+            for _ in range(5):
                 try:
-                    with urllib.request.urlopen(CC_URL, timeout=60) as r, open(dest + '.part', 'wb') as out:
-                        total = int(r.headers.get('Content-Length') or 0); got = 0
-                        while chunk := r.read(1 << 16):
-                            out.write(chunk); got += len(chunk)
-                            if total: GLib.idle_add(bar.set_fraction, got / total)
+                    r = subprocess.run(['curl', '-fsSL', '--max-time', '300', '-o', dest + '.part',
+                                        '-w', '%{size_download} %header{content-length}', CC_URL],
+                                       capture_output=True, text=True)
+                    if r.returncode != 0: raise IOError(r.stderr.strip() or f'curl exit {r.returncode}')
+                    got, total = (int(x) if x.isdigit() else 0 for x in (r.stdout.split() + ['', ''])[:2])
                     with open(dest + '.part', 'rb') as fh: mz = fh.read(2)
                     if (total and got != total) or mz != b'MZ':
                         raise IOError(f'incomplete download ({got} of {total} bytes)')

@@ -120,9 +120,9 @@ modules:
       - type: archive
         url: https://dl.winehq.org/wine/source/11.x/wine-11.18.tar.xz
         sha256: c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4
-      - type: dir
-        path: ../../patches
-        dest: aw/patches
+      - type: git                  # the patches, from the last commit: cached by commit (a dir source never is)
+        path: ../..
+        dest: aw
     cleanup:                       # build-only parts (applied after every module, so nvcuda still builds)
       - /adobewine/runtime/include
       - /adobewine/runtime/share/man

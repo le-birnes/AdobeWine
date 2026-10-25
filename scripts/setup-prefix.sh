@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -x "$ADOBEWINE_RUNTIME/bin/wine" ] || { echo "no AdobeWine runtime: install the adobewine package or run scripts/build-wine.sh" >&2; exit 1; }
-command -v winetricks >/dev/null || { echo "winetricks is required (install it from your distribution)" >&2; exit 1; }
+for t in winetricks cabextract; do command -v $t >/dev/null || { echo "$t is required (install it from your distribution)" >&2; exit 1; }; done
 DEPS="$ADOBEWINE_HOME/deps"
 ls -d "$DEPS"/dxvk-*/ >/dev/null 2>&1 || "$ADOBEWINE_SRC/scripts/fetch-deps.sh"
 SYS="$WINEPREFIX/drive_c/windows/system32"
@@ -32,12 +32,16 @@ SYS32="$WINEPREFIX/drive_c/windows/syswow64"
 SHARE="$ADOBEWINE_HOME/cache"
 WINECACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wine"
 mkdir -p "$SHARE/gecko" "$SHARE/mono" "$WINECACHE"
-for a in x86 x86_64; do
-  f="$SHARE/gecko/wine-gecko-2.47.4-$a.msi"
-  [ -f "$f" ] || curl -fsSL -o "$f" "https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-$a.msi"
-done
-f="$SHARE/mono/wine-mono-11.3.0-x86.msi"
-[ -f "$f" ] || curl -fsSL -o "$f" "https://dl.winehq.org/wine/wine-mono/11.3.0/wine-mono-11.3.0-x86.msi"
+get() {  # get <file> <url> <sha256>: a download cut short is fetched again instead of kept
+  [ -f "$1" ] && echo "$3  $1" | sha256sum -c --quiet 2>/dev/null && return
+  curl -fsSL --retry 3 -o "$1.part" "$2" && echo "$3  $1.part" | sha256sum -c --quiet && mv "$1.part" "$1"
+}
+get "$SHARE/gecko/wine-gecko-2.47.4-x86.msi" https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86.msi \
+    26cecc47706b091908f7f814bddb074c61beb8063318e9efc5a7f789857793d6
+get "$SHARE/gecko/wine-gecko-2.47.4-x86_64.msi" https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-x86_64.msi \
+    e590b7d988a32d6aa4cf1d8aa3aa3d33766fdd4cf4c89c2dcc2095ecb28d066f
+get "$SHARE/mono/wine-mono-11.3.0-x86.msi" https://dl.winehq.org/wine/wine-mono/11.3.0/wine-mono-11.3.0-x86.msi \
+    df2dfc1665c2511882e7cabd56eafd0c0a3d94e5a7e86f969277f6c189d418d3
 for f in "$SHARE"/gecko/*.msi "$SHARE"/mono/*.msi; do [ -e "$WINECACHE/${f##*/}" ] || ln -s "$f" "$WINECACHE/"; done
 
 [ -f "$WINEPREFIX/system.reg" ] || wineboot -i
@@ -45,11 +49,41 @@ wineserver -w
 # Older prefixes, or a first boot that could not install them: install them directly.
 [ -d "$SYS/gecko/2.47.4" ] || { wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86_64.msi" /qn; wine msiexec /i "$SHARE/gecko/wine-gecko-2.47.4-x86.msi" /qn; }
 [ -d "$WINEPREFIX/drive_c/windows/mono" ] || wine msiexec /i "$SHARE/mono/wine-mono-11.3.0-x86.msi" /qn
+# Windows Installer keeps a copy of every package it installed (windows/Installer), byte for byte the downloads
+# above: hardlinked instead of stored twice (184 MB). It only reads them, for repair and uninstall.
+for c in "$WINEPREFIX"/drive_c/windows/Installer/*.msi; do
+  for f in "$SHARE"/gecko/*.msi "$SHARE"/mono/*.msi; do
+    [ "$c" -ef "$f" ] || { [ "$(stat -c %s "$c")" = "$(stat -c %s "$f")" ] && cmp -s "$c" "$f" && ln -f "$f" "$c"; } || true
+  done
+done
 
 # Microsoft's shader compiler (Audition compiles HLSL at run time) and the core fonts
 # (the Creative Cloud renderer crashes without real Windows fonts).
 [ -f "$WINEPREFIX/.adobewine-d3dcompiler" ] || { winetricks -q d3dcompiler_47 && touch "$WINEPREFIX/.adobewine-d3dcompiler"; }
-[ -f "$WINEPREFIX/drive_c/windows/Fonts/arial.ttf" ] || winetricks -q corefonts tahoma
+# Core fonts and Tahoma (CEF crashes without them): the files, URLs, checksums and cache of `winetricks corefonts
+# tahoma`, unpacked here in 2 s instead of its 45 s (it starts Wine once per font); register-fonts.sh below
+# registers them.
+if [ ! -f "$WINEPREFIX/drive_c/windows/Fonts/arial.ttf" ]; then
+  wtc="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks"; t="$(mktemp -d)"
+  while read -r dir url sum; do
+    mkdir -p "$wtc/$dir"; get "$wtc/$dir/${url##*/}" "$url" "$sum"
+    cabextract -q -L -d "$t" "$wtc/$dir/${url##*/}"
+  done <<'EOF'
+corefonts https://github.com/pushcx/corefonts/raw/master/andale32.exe 0524fe42951adc3a7eb870e32f0920313c71f170c859b5f770d82b4ee111e970
+corefonts https://github.com/pushcx/corefonts/raw/master/arial32.exe 85297a4d146e9c87ac6f74822734bdee5f4b2a722d7eaa584b7f2cbf76f478f6
+corefonts https://github.com/pushcx/corefonts/raw/master/arialb32.exe a425f0ffb6a1a5ede5b979ed6177f4f4f4fdef6ae7c302a7b7720ef332fec0a8
+corefonts https://github.com/pushcx/corefonts/raw/master/comic32.exe 9c6df3feefde26d4e41d4a4fe5db2a89f9123a772594d7f59afd062625cd204e
+corefonts https://github.com/pushcx/corefonts/raw/master/courie32.exe bb511d861655dde879ae552eb86b134d6fae67cb58502e6ff73ec5d9151f3384
+corefonts https://github.com/pushcx/corefonts/raw/master/georgi32.exe 2c2c7dcda6606ea5cf08918fb7cd3f3359e9e84338dc690013f20cd42e930301
+corefonts https://github.com/pushcx/corefonts/raw/master/impact32.exe 6061ef3b7401d9642f5dfdb5f2b376aa14663f6275e60a51207ad4facf2fccfb
+corefonts https://github.com/pushcx/corefonts/raw/master/times32.exe db56595ec6ef5d3de5c24994f001f03b2a13e37cee27bc25c58f6f43e8f807ab
+corefonts https://github.com/pushcx/corefonts/raw/master/trebuc32.exe 5a690d9bb8510be1b8b4fe49f1f2319651fe51bbe54775ddddd8ef0bd07fdac9
+corefonts https://github.com/pushcx/corefonts/raw/master/verdan32.exe c1cb61255e363166794e47664e2f21af8e3a26cb6346eb8d2ae2fa85dd5aad96
+corefonts https://github.com/pushcx/corefonts/raw/master/webdin32.exe 64595b5abc1080fba8610c5c34fab5863408e806aafe84653ca8575bed17d75a
+tahoma https://downloads.sourceforge.net/corefonts/OldFiles/IELPKTH.CAB c1be3fb8f0042570be76ec6daa03a99142c88367c1bc810240b85827c715961a
+EOF
+  cp "$t"/*.ttf "$WINEPREFIX/drive_c/windows/Fonts/"; rm -rf "$t"
+fi
 # WinRT classes added by the patches (0031 ToastNotificationManager) need registering.
 wine regsvr32 /s windows.ui.dll
 

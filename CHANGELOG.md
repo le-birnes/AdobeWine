@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- The Flatpak's first start is faster and smaller: from Open to Adobe's installer in about 50 s instead of 90 s,
+  and about 210 MB less on disk per user. Setup unpacks the core fonts itself instead of through winetricks
+  (2 s instead of 45 s, same files and checksums), hardlinks Windows Installer's copies of Gecko and Mono to the
+  downloads instead of storing them twice, and drops the DXVK/vkd3d-proton/nvidia-libs archives once unpacked.
+- The first-run window downloads Creative Cloud with curl: Adobe's server ended about half of the previous
+  downloads at 1 MB, and three failures in a row stopped the setup with an error.
+- Gecko and Mono downloads are checked against their checksums, so a download cut short is fetched again
+  instead of kept.
+
 ## 0.4.0 - 2026-10-24
 
 - **One file for every distribution: `CCINSTALLER.flatpak`.** Double-click it, click Install in your app store, then

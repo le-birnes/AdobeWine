@@ -5,12 +5,14 @@ source "$(cd "$(dirname "$0")/.." && pwd)/bin/env.sh"
 D="$ADOBEWINE_HOME/deps"; mkdir -p "$D"; cd "$D"
 fetch() {  # fetch <url> <sha256>
   local f="${1##*/}"
+  [ "$(cat "$f.ok" 2>/dev/null)" = "$2" ] && return  # unpacked before; the archive itself is not kept (25 MB)
   if [ ! -f "$f" ]; then
     curl -fL --retry 3 -o "$f.part" "$1"
     mv "$f.part" "$f"
   fi
   echo "$2  $f" | sha256sum -c --quiet || { echo "checksum mismatch: $f" >&2; rm -f "$f"; exit 1; }
   tar --no-same-owner -xf "$f"  # as root (containers) tar would try to keep the packer's uid
+  echo "$2" > "$f.ok"; rm -f "$f"
 }
 # DXVK: Direct3D 8-11 -> Vulkan
 fetch https://github.com/doitsujin/dxvk/releases/download/v3.1.1/dxvk-3.1.1.tar.gz \
