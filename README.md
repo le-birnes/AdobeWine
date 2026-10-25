@@ -1,141 +1,108 @@
 # AdobeWine
 
-**Adobe Creative Cloud apps on Linux, through a patched Wine.**
+**Run Adobe Creative Cloud on Linux: Photoshop, Illustrator, Premiere Pro and more.**
 
-AdobeWine is Wine 11.18 plus 94 patches. With it, Adobe's apps install through Creative
-Cloud, sign in with a normal Adobe account and run with GPU acceleration. Photoshop,
-Illustrator, Premiere Pro, Audition, Media Encoder and the Creative Cloud desktop app work
-for everyday use; After Effects renders real projects now but is less tested; InDesign lays out and exports; Bridge is next.
+Hi, and welcome! Thanks for stopping by.
 
-**See it:** [a short showreel (1:24)](https://youtu.be/3Vbzt4cGSQQ) made entirely in these apps under
-AdobeWine, from the pen-pressure painting to the Premiere cut and the Media Encoder export.
+AdobeWine is for people who would like to try Linux but need Adobe's apps for their work. You install it, sign
+in with your own Adobe account, and use the apps as usual, with your graphics card doing the heavy lifting.
 
-> **Status: early testing (0.4.0).** Built and measured on one reference machine (Arch-based,
-> NVIDIA RTX 4070 Laptop). Community reports so far: Linux Mint (RTX 4060), Arch/Omarchy
-> (RTX 4090) and Gentoo (Intel UHD 620). **No AMD report yet.** Please
-> [try it and report back](CONTRIBUTING.md), good or bad.
+**See it in action:** [a short showreel (1:24)](https://youtu.be/3Vbzt4cGSQQ), made entirely in these apps on
+Linux, from the painting to the final export.
 
-| App (2026 versions) | State on the reference machine |
+> **Early testing (0.4.1).** AdobeWine is built and tested day to day on one Arch-based laptop (CachyOS, NVIDIA
+> RTX 4070). The one-file installer also runs on Fedora, Ubuntu, Debian, Linux Mint, openSUSE and others, but
+> those have had less real-world use. If you try it, please tell us how it went, good or bad: it really helps.
+
+## Install it (about 2 minutes, plus Adobe's download)
+
+You need: a Linux computer with a graphics card from the last few years, about 25 GB of free space, and an Adobe
+Creative Cloud subscription.
+
+1. **Download** `CCINSTALLER.flatpak` from the [releases page](../../releases) (the newest is at the top).
+2. **Double-click** the file. Your app store opens (GNOME Software, KDE Discover or Mint's Software Manager).
+   Click **Install**.
+3. **Open AdobeWine** from your app menu. It checks your computer, sets everything up, downloads Creative Cloud
+   from Adobe and starts it. This takes about a minute.
+4. **Sign in** with your Adobe account in the window that appears.
+5. **Install your apps** (Photoshop, Premiere Pro…) from Creative Cloud, as you would on Windows or a Mac.
+   They show up in the AdobeWine window and in your app menu.
+
+**Nothing happens when you double-click?** Your system doesn't have Flatpak yet (Ubuntu and Debian don't by
+default). Open a terminal, type this once, then try again:
+
+```sh
+sudo apt install flatpak gnome-software-plugin-flatpak
+```
+
+**Something not working?** Click **Report a problem** in the AdobeWine window. It shows you the report before
+anything is sent. More help: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## What works
+
+| App | State |
 |---|---|
-| Creative Cloud desktop 6.10 | Sign in, Home, Apps (install, update, open, uninstall), Fonts, Files. The web installer works since 0.2.0 |
-| Photoshop 27.10 | Home, New, layers, masks, type, filters, Remove Background, Generative Fill, export. **All 75 filters and adjustments tested give the same output as on Windows** |
-| Illustrator 30.8 | Home, New, shapes, pen, type, effects, Pathfinder, Image Trace, save/export. **107 of 139 reference outputs match Windows**, the rest not compared yet |
-| Premiere Pro 26.5 | Import, timeline editing, Lumetri, titles, playback, NVENC export; HEVC export 5-10% faster than Windows after correcting for the hardware |
-| Media Encoder 26.5 | Queue, presets, CUDA renderer, NVENC/NVDEC export |
-| Audition 26.5 | Recording, multitrack, effects, noise reduction, mixdown, video track |
-| After Effects 26.5 | Opens projects, scripting, keyframes, relinks moved footage, extruded 3D text with the Cinema 4D renderer; **renders** (since 0.2.2): a real 300-layer caption comp matches the Windows render (42.8-68.6 dB PSNR on 8 checked frames), 88 s vs 57 s on Windows. Less tested than the others |
-| InDesign 2026 | Layout by script and by hand: styles, tables, placed PSD and AI files, PDF and PNG export. Less tested than the others |
+| Creative Cloud | Sign in, install, update and open apps, fonts, files |
+| Photoshop | Everyday editing, layers, type, filters, Remove Background, Generative Fill, export. All 75 filters and adjustments tested give the same result as on Windows |
+| Illustrator | Shapes, pen, type, effects, Pathfinder, Image Trace, save and export |
+| Premiere Pro | Import, editing, color (Lumetri), titles, playback, fast NVIDIA export |
+| Media Encoder | Export queue, presets, GPU-accelerated encoding |
+| Audition | Recording, multitrack, effects, noise reduction, mixdown |
+| After Effects | Opens and renders real projects, 3D text; less tested |
+| InDesign | Layout, styles, tables, placed images, PDF export; less tested |
 | Bridge | Opens; not tested yet |
 
-How it is checked: a Windows machine lists every function of each app and saves a reference
-output for each; the same steps run under AdobeWine and the outputs are compared by pixels,
-audio samples or file contents, not by eye. So far 4705 functions are known and 241 tested
-(the 10-11 everyday functions per app, plus the full Photoshop filter and Illustrator effect
-sets). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md). Details:
-[docs/STATUS.md](docs/STATUS.md).
+Details for each app: [docs/STATUS.md](docs/STATUS.md).
 
-### What's new since 0.1.0
-- **0.2.0:** the Creative Cloud web installer no longer shows a blank white window (cause found
-  by NickPittas); Photoshop finds the GPU on Intel graphics whose driver offers only feature level
-  11_x, Segoe UI without Windows fonts, newest-release launching, menu icons and a Gentoo guide
-  (all switch87); file dialogs through your desktop's own picker as an experiment
-  (`WINE_FORCE_PORTAL=1`, ported from NickPittas' AE4Linux and Wine MR 10060).
-- **0.2.1:** two patches revised so Wine's own test suite passes again (winhttp connection reuse,
-  mshtml script loading); `adobewine aftereffects`; the launcher notices an app that closed but
-  did not exit and ends it, instead of silently opening nothing.
-- **0.2.2:** After Effects renders (a crash in Wine's Direct2D killed its main thread when a comp was
-  added to the Render Queue); Illustrator's PSD/SVG exports use Myriad Pro like on Windows; the apps
-  follow your desktop's scale on HiDPI screens; the desktop file picker shows After Effects' "Format:"
-  label.
-- **0.4.0:** one file for every distribution, `CCINSTALLER.flatpak`: double-click, Install, Open, and it
-  sets up and stops at Adobe's sign-in (tested on Fedora, Ubuntu, Debian, Mint, openSUSE and Arch);
-  Illustrator's floating panels (0091), InDesign Ctrl shortcuts after a mouse selection (0090), After
-  Effects' Render Queue panel (0089), InDesign scriptable over COM (0088).
-- **0.3.1:** the [showreel](https://youtu.be/3Vbzt4cGSQQ); Illustrator's canvas takes clicks while
-  another Adobe app is open (0087); scripting an app over COM works after it crashed and restarted (0086).
-- **0.3.0:** After Effects' composition viewer shows the comp with CUDA; Premiere's Import and Export
-  modes draw, its timeline no longer deadlocks (Cikappa2904) and it starts on AMD with Mesa's
-  OpenCL; pen tablets with pressure under XWayland; Creative Cloud's self-update to 6.11 completes;
-  Photoshop renders faster and sharper on Wayland/NVIDIA (nvb-uy). Rerun `adobewine setup` after
-  updating. Full list: [CHANGELOG.md](CHANGELOG.md).
+## Good to know
 
-### Known gaps
-- After Effects with the Cinema 4D renderer grew past 16 GB while previewing and ran a 32 GB machine out of memory; with
-  *Cache Frames When Idle* and *Multi-Frame Rendering* turned off it stayed near 6 GB. Render with
-  `aerender` for long jobs, and use `tools/sandbox.sh` so a runaway app is stopped on its own.
-- NVIDIA is the tested platform. On AMD, Photoshop works and Premiere is being tested (#15); on AMD and Intel the CUDA features (Mercury GPU, NVENC) are not available.
+- **You need your own Adobe subscription.** AdobeWine contains no Adobe software and doesn't crack or bypass
+  anything: you download Creative Cloud from Adobe and sign in normally.
+- **NVIDIA is the best-tested graphics card.** Intel graphics start fine in our tests. AMD has fewer reports so
+  far: Photoshop works, Premiere is being tested. NVIDIA-only features (CUDA, NVENC) aren't available on AMD or
+  Intel, just like on Windows.
+- **After Effects can use a lot of memory** while previewing Cinema 4D scenes. Turning off *Cache Frames When
+  Idle* and *Multi-Frame Rendering* keeps it in check.
+- **Not affiliated with Adobe.** "Adobe", "Photoshop", "Illustrator", "Premiere Pro", "Audition" and "Creative
+  Cloud" are trademarks of Adobe Inc., used here only to say which programs AdobeWine runs.
+
+## Other ways to install
+
+- **Arch Linux, CachyOS, EndeavourOS, Manjaro, Garuda:** the `adobewine` / `adobewine-bin` packages, the platform
+  AdobeWine is developed on. See [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md).
+- **Gentoo:** the `::snakebyte` overlay, maintained outside this project. See
+  [docs/INSTALL-GENTOO.md](docs/INSTALL-GENTOO.md).
+- **Build it yourself, any distribution:** [docs/INSTALL.md](docs/INSTALL.md).
+
+Which distributions, graphics cards and desktops should work: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Why this exists
 
-I'm not a Wine developer. I needed Adobe's apps for my work and didn't want to keep Windows
-just for them, so I built this for my own laptop, with a lot of help from Claude, an AI
-coding assistant. I'm sharing it because many people want to get off both Windows and
-macOS, keep working with Adobe, and still tinker with their own machines. It has only been
-tested on one machine so far. Your reports, fixes and criticism are what will make it work
-for everyone else.
+I'm not a Wine developer. I needed Adobe's apps for my work and didn't want to keep Windows just for them, so I
+built this for my own laptop, with a lot of help from Claude, an AI coding assistant. I'm sharing it because many
+people want to leave Windows or macOS but keep working with Adobe. Your reports, fixes and criticism are what will
+make it work for everyone else.
 
-## What it is and what it is not
+## Help and feedback
 
-- It **is** a Wine build: open-source patches on top of upstream Wine (LGPL-2.1-or-later),
-  plus scripts that set up a Wine prefix with DXVK, vkd3d-proton and nvidia-libs.
-- It **does not** include or download any Adobe software. You install Adobe's apps yourself
-  with Adobe's own Creative Cloud installer.
-- It **does not** crack, bypass or modify Adobe licensing. You need your own Creative
-  Cloud subscription and you sign in normally.
-- It is **not affiliated with, endorsed by or supported by Adobe**. "Adobe", "Photoshop",
-  "Illustrator", "Premiere Pro", "Audition" and "Creative Cloud" are trademarks of Adobe
-  Inc., used here only to say which programs this Wine build is meant to run.
+- **Tried it?** Tell us your distribution, graphics card and what happened in a
+  [compatibility report](../../issues/new?template=compatibility.yml), or use the Report a problem button.
+- **Questions and ideas:** [Discussions](../../discussions). Where this is going: [docs/ROADMAP.md](docs/ROADMAP.md).
+- **Want to help build it?** See [CONTRIBUTING.md](CONTRIBUTING.md). Patches are especially welcome for AMD and
+  Intel graphics.
 
-## Install
+## How it works (for the curious)
 
-- **Any distribution, the easy way:** download `CCINSTALLER.flatpak` from the
-  [latest release](../../releases), double-click it, click Install, then Open. It sets
-  everything up and stops at Adobe's sign-in; no terminal needed. Ubuntu needs Flatpak first
-  (see [docs/INSTALL.md](docs/INSTALL.md)).
-- **Arch Linux and derivatives (CachyOS, EndeavourOS, Manjaro, Garuda):** the AUR packages
-  `adobewine` / `adobewine-bin` are being submitted. Until then, build the same package from
-  this repository (see [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md)).
-- **Gentoo:** Portage packages in the `::snakebyte` overlay (`app-emulation/adobewine`,
-  maintained outside this project). See [docs/INSTALL-GENTOO.md](docs/INSTALL-GENTOO.md).
-- **Any other distribution, from source:** see [docs/INSTALL.md](docs/INSTALL.md).
+AdobeWine is [Wine](https://www.winehq.org) 11.18, the compatibility layer that also runs Windows games on Steam,
+plus 94 fixes for what Adobe's apps need. Each fix comes from comparing the same task on Windows and under Wine,
+with a small test program that shows the difference. Every fix is listed in [docs/PATCHES.md](docs/PATCHES.md), the
+method is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md), and the fixes are being offered back to the Wine project
+so they reach every Wine user. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
-Without the Flatpak, once installed, the short version is:
-
-```sh
-adobewine setup --windows-fonts /path/to/Windows/Fonts  # create the prefix (once)
-adobewine run ~/Downloads/Creative_Cloud_Set-Up.exe       # install Creative Cloud, sign in
-adobewine fix-signin                                      # if the sign-in window stays blank
-adobewine cc                                              # install apps from Creative Cloud
-adobewine launchers                                       # add them to your app menu
-```
-
-Which distributions, GPUs and desktops should work: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
-When something breaks: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
-
-## How it was made
-
-The patches come from comparing the same Adobe workflows on real Windows and under Wine.
-API traces, window trees and output files were recorded on Windows, and each difference
-was fixed in Wine with a small test program. Every patch has a one-line description in
-[docs/PATCHES.md](docs/PATCHES.md), and [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)
-describes the method. Patches 0001-0003 come from
-[PhialsBasement](https://github.com/PhialsBasement)'s Adobe installer work for Wine. The
-rest were written for this project, and we would like to see them upstream in WineHQ.
-
-## Help wanted
-
-Where this is going and what's next: [docs/ROADMAP.md](docs/ROADMAP.md)
-([comments welcome](../../discussions/9)).
-
-- **Test it** on your distribution and GPU, and tell us in a
-  [compatibility report](../../issues/new?template=compatibility.yml).
-- **Report bugs** with a log: `adobewine` prints where it saved each run's log.
-- **Patches welcome**, especially for AMD and Intel GPUs, other distributions, and
-  upstreaming. See [CONTRIBUTING.md](CONTRIBUTING.md).
-- Questions and ideas: [Discussions](../../discussions).
+Thanks to [PhialsBasement](https://github.com/PhialsBasement), whose Adobe installer work for Wine started the
+first patches, and to NickPittas, switch87, nvb-uy, Cikappa2904 and everyone who has sent fixes, tests and reports.
 
 ## License
 
-The patches and scripts are licensed under the GNU LGPL 2.1 or later, the same as Wine
-(see [LICENSE](LICENSE)). DXVK, vkd3d-proton, nvidia-libs, wine-gecko and wine-mono are
-downloaded from their own projects and keep their own licenses.
+The patches and scripts are licensed under the GNU LGPL 2.1 or later, the same as Wine (see [LICENSE](LICENSE)).
+DXVK, vkd3d-proton, nvidia-libs, wine-gecko and wine-mono come from their own projects and keep their own licenses.

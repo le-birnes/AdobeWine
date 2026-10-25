@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 - 2026-10-25
 
+- New README for people who want to try Linux and keep working with Adobe: install in five steps, what works, what
+  to know; the technical parts moved down or into docs/.
 - The Flatpak's first start is faster and smaller: from Open to Adobe's installer in about 50 s instead of 90 s,
   and about 210 MB less on disk per user. Setup unpacks the core fonts itself instead of through winetricks
   (2 s instead of 45 s, same files and checksums), hardlinks Windows Installer's copies of Gecko and Mono to the
