@@ -43,7 +43,23 @@ case "$cmd" in
         echo "An Adobe app is still open (maybe asking to save). Close it, or run: adobewine off --force"; exit 1
       fi
     fi
-    wineserver -k; echo "All AdobeWine processes stopped."; exit 0 ;;
+    wineserver -k
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "wineserver -k failed (exit $rc)." >&2
+      exit "$rc"
+    fi
+
+    # Wait for the Wine server to finish shutting down.
+    wineserver -w
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "Wine server shutdown wait failed (exit $rc)." >&2
+      exit "$rc"
+    fi
+
+    echo "All AdobeWine processes stopped."
+    exit 0 ;;
   fix-signin)
     # Adobe's licensing window comes in two flavours; the Chromium one does not draw under
     # Wine, the Internet Explorer engine one does. Renaming the Chromium helper makes Adobe's
