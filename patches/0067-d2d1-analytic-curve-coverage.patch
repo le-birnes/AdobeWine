@@ -5,11 +5,34 @@ Curves were cut with clip() on their implicit function, which multisampling does
 because the shader runs once per pixel. Use g / fwidth(g) as the distance to the edge and
 scale the colour by the coverage. Straight segments and plain triangles have a constant g and
 keep the old inside test.
+Revised 2026-10-29 (AdobeWine): only with D2D1_ANTIALIAS_MODE_PER_PRIMITIVE. In aliased mode the coverage is the old
+hard inside test, as Windows draws it: the first version also smoothed aliased curves, which alone made 94 checks of
+Wine's d2d1 tests fail (test_fill_geometry, test_draw_geometry, test_path_geometry, test_bezier_intersect all draw
+aliased). The pixel shader gets the mode in the constant buffer slot that was padding. d2d1 tests now 0 failures on
+both arches.
 ---
-diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
 --- a/dlls/d2d1/device.c
 +++ b/dlls/d2d1/device.c
-@@ -4630,6 +4630,7 @@ static const char shape_ps_code[] =
+@@ -1016,8 +1016,8 @@
+     cb_data = map_desc.pData;
+     cb_data->outline = outline;
+     cb_data->is_arc = is_arc;
+-    cb_data->pad[0] = 0;
+-    cb_data->pad[1] = 0;
++    cb_data->aliased = context->drawing_state.antialiasMode == D2D1_ANTIALIAS_MODE_ALIASED;
++    cb_data->pad = 0;
+     if (!d2d_brush_fill_cb(brush, &cb_data->colour_brush))
+         WARN("Failed to initialize colour brush buffer.\n");
+     if (!d2d_brush_fill_cb(opacity_brush, &cb_data->opacity_brush))
+@@ -4498,6 +4498,7 @@
+     "\n"
+     "bool outline;\n"
+     "bool is_arc;\n"
++    "bool aliased;\n"
+     "struct brush\n"
+     "{\n"
+     "    uint type;\n"
+@@ -4630,6 +4631,7 @@
      "float4 main(struct input i) : SV_Target\n"
      "{\n"
      "    float4 colour;\n"
@@ -17,7 +40,7 @@ diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
      "\n"
      "    colour = sample_brush(colour_brush, t0, s0, b0, i.p);\n"
      "    if (opacity_brush.type < BRUSH_TYPE_COUNT)\n"
-@@ -4666,14 +4667,14 @@ static const char shape_ps_code[] =
+@@ -4666,14 +4668,14 @@
      "            df = 2.0f * uv.x * du - dv;\n"
      "\n"
      "            clip(dot(df, uv.zw));\n"
@@ -34,7 +57,7 @@ diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
      "        }\n"
      "    }\n"
      "    else\n"
-@@ -4682,15 +4683,18 @@ static const char shape_ps_code[] =
+@@ -4682,15 +4684,20 @@
      "         * \"i.b.z\" determines which side of the curve is shaded. */\n"
      "        if (!is_arc)\n"
      "        {\n"
@@ -51,8 +74,22 @@ diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
 -    "    return colour;\n"
 +    "    fw = fwidth(g);\n"
 +    "    coverage = fw > 0.0f ? saturate(0.5f + g / fw) : (g >= 0.0f ? 1.0f : 0.0f);\n"
++    "    /* D2D1_ANTIALIAS_MODE_ALIASED: hard edges, as Windows draws them */\n"
++    "    if (aliased) coverage = g >= 0.0f ? 1.0f : 0.0f;\n"
 +    "    clip(coverage - 1.0f / 512.0f);\n"
 +    "    return colour * coverage;\n"
      "}\n";
  static const struct shape_info
  {
+--- a/dlls/d2d1/d2d1_private.h
++++ b/dlls/d2d1/d2d1_private.h
+@@ -120,7 +120,8 @@
+ {
+     BOOL outline;
+     BOOL is_arc;
+-    BOOL pad[2];
++    BOOL aliased;
++    BOOL pad;
+     struct d2d_brush_cb colour_brush;
+     struct d2d_brush_cb opacity_brush;
+ };
