@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Patch 0067 (curve antialiasing, from #12) now only smooths edges when the app asks for antialiasing; in aliased
+  mode curves keep hard edges, as on Windows. Wine's own Direct2D tests go from 94 failures to 0.
+
 ## 0.4.1 - 2026-10-25
 
 - New README for people who want to try Linux and keep working with Adobe: install in five steps, what works, what
