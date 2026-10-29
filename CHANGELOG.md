@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A program that changes its own image base address (self-unpacking installers) no longer crashes in the next thread
+  it starts (patch 0092, issue #18: Adobe's Creative Cloud installer on an Intel laptop). Test: tests/loader/imagebase.c.
+
 ## 0.4.1 - 2026-10-25
 
 - New README for people who want to try Linux and keep working with Adobe: install in five steps, what works, what
