@@ -16,6 +16,19 @@ latest() {
   local d; d="$(ls -d "$WINEPREFIX/drive_c/Program Files/Adobe/$1 20"[0-9][0-9] 2>/dev/null | sort -V | tail -1)"
   basename "${d:-$1 2026}"
 }
+# Main Adobe programs that keep the Wine server alive while they run. When one of them is closed with
+# its normal close button, Wine is stopped only if none of the others are still open.
+# (If Creative Cloud starts in the background on its own, remove it from this list, or the
+# server would never count as idle.)
+ADOBE_APPS='^(Photoshop|Illustrator|AfterFX|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder|Creative Cloud)\.exe'
+stop_wine_if_idle() {
+  sleep 3   # let the app finish exiting
+  if wine tasklist 2>/dev/null | grep -qiE "$ADOBE_APPS"; then
+    return 0   # another Adobe app is still open: leave Wine running
+  fi
+  wineserver -k 2>/dev/null   # ends leftover helpers (CoreSync, CEPHtmlEngine, ...)
+  wineserver -w 2>/dev/null   # wait until the server is really gone
+}
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   photoshop)   exe="$P\\$(latest "Adobe Photoshop")\\Photoshop.exe" ;;
@@ -121,6 +134,8 @@ echo "log: $log"
 start=$SECONDS
 wine "$exe" "${args[@]}" > "$log" 2>&1
 rc=$?
+# The app was closed with its normal close button: stop Wine too if no other Adobe app is open.
+[ "$cmd" != run ] && stop_wine_if_idle
 # After a crash: offer a report (REPORTS=ask, the default), send it (REPORTS=auto) or do
 # nothing (REPORTS=off), as set in ~/.config/adobewine/config.
 conf="${XDG_CONFIG_HOME:-$HOME/.config}/adobewine/config"
