@@ -36,6 +36,10 @@ if [ "${ADOBEWINE_NVIDIA_OFFLOAD:-auto}" = 1 ] || { [ "${ADOBEWINE_NVIDIA_OFFLOA
   export __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only
 fi
 [ -e /proc/driver/nvidia/version ] && export DXVK_ENABLE_NVAPI=1
+# AMD OpenCL (ROCm): with this, the reporter's Premiere stopped showing black frames while scrubbing (#15, together
+# with ROCR_VISIBLE_DEVICES=0, which is machine-specific and not set here). It lets kernels with incompatible
+# pointer types compile as on Windows' driver. Only AMD's runtime reads it.
+export AMD_OCL_BUILD_OPTIONS_APPEND="${AMD_OCL_BUILD_OPTIONS_APPEND--Wf,-Wno-error=incompatible-pointer-types}"
 
 # Creative Cloud and its helpers write to heap blocks after freeing them; patch 0032 keeps
 # freed blocks out of reuse for a while in these processes only.
