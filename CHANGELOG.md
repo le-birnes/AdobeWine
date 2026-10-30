@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Bridge, Lightroom Classic and Lightroom install from Creative Cloud and open (first tests, 2026-10-30).
+- A failed install no longer breaks the other apps: when Acrobat's installer failed, Wine's rollback deleted the
+  Microsoft Visual C++ runtime that every Adobe app needs (patches 0093, 0094). Acrobat itself does not install yet:
+  Wine cannot apply one kind of update patch that Acrobat's installer uses; being worked on.
+
 ## 0.4.1 - 2026-10-25
 
 - New README for people who want to try Linux and keep working with Adobe: install in five steps, what works, what
