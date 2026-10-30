@@ -73,6 +73,8 @@ Details for each app: [docs/STATUS.md](docs/STATUS.md).
 - **Gentoo:** the `::snakebyte` overlay, maintained outside this project. See
   [docs/INSTALL-GENTOO.md](docs/INSTALL-GENTOO.md).
 - **Build it yourself, any distribution:** [docs/INSTALL.md](docs/INSTALL.md).
+- **The code without GitHub:** a mirror on our own site, kept in step with GitHub:
+  `git clone https://ferrarivoz.com/git/AdobeWine.git`
 
 Which distributions, graphics cards and desktops should work: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
