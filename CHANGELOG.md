@@ -6,6 +6,11 @@
 - A failed install no longer breaks the other apps: when Acrobat's installer failed, Wine's rollback deleted the
   Microsoft Visual C++ runtime that every Adobe app needs (patches 0093, 0094). Acrobat itself does not install yet:
   Wine cannot apply one kind of update patch that Acrobat's installer uses; being worked on.
+- Bridge: 21 everyday functions tested and working (browse, previews, ratings, keywords, metadata, collections,
+  stacks, batch rename, Camera Raw, Image Processor).
+- Lightroom Classic: 18 everyday functions tested and working (import, ratings, keywords, collections, Develop
+  edits and presets, virtual copies, export to JPEG, TIFF, PSD and DNG). Exporting to a folder on a separate
+  disk or partition (for example a separate /home) failed with "The file could not be written"; fixed (0095).
 
 ## 0.4.1 - 2026-10-25
 
