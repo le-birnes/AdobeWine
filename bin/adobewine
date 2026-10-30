@@ -20,14 +20,51 @@ latest() {
 # its normal close button, Wine is stopped only if none of the others are still open.
 # (If Creative Cloud starts in the background on its own, remove it from this list, or the
 # server would never count as idle.)
-ADOBE_APPS='^(Photoshop|Illustrator|AfterFX|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder|Creative Cloud)\.exe'
+ADOBE_APPS='^(Photoshop|Illustrator|AfterFX|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder)\.exe'
 stop_wine_if_idle() {
   sleep 3   # let the app finish exiting
-  if wine tasklist 2>/dev/null | grep -qiE "$ADOBE_APPS"; then
-    return 0   # another Adobe app is still open: leave Wine running
+  local list n
+  list="$(wine tasklist 2>/dev/null)" || {>&2; return 0; }
+  [ -n "$list" ] || {>&2; return 0; }
+  if grep -qiE "$ADOBE_APPS" <<<"$list"; then
+    return 0
   fi
-  wineserver -k 2>/dev/null   # ends leftover helpers (CoreSync, CEPHtmlEngine, ...)
-  wineserver -w 2>/dev/null   # wait until the server is really gone
+  n="$(cc_window_count)"
+  if [ "${n:-0}" -gt 0 ]; then
+    return 0
+  fi
+  wineserver -k 2>/dev/null
+  wineserver -w 2>/dev/null
+}
+# Creative Cloud keeps running in the background after its window is closed, so `wine` never
+# returns. Count CC's visible windows instead (needs python-xlib, which this script already uses).
+cc_window_count() {
+  python3 -c "
+from Xlib import display
+d = display.Display()
+n = 0
+for w in d.screen().root.query_tree().children:
+    try:
+        c = w.get_wm_class()
+        n += bool(c and c[1].lower() == 'creative cloud.exe' and w.get_attributes().map_state == 2)
+    except Exception:
+        pass
+print(n)" 2>/dev/null
+}
+wait_for_cc_close() {
+  local wpid=$1 n list gone=0 seen=0
+  while kill -0 "$wpid" 2>/dev/null; do
+    n="$(cc_window_count)"
+    [ -z "$n" ] && return          # can't check windows: don't interfere
+    if [ "$n" -gt 0 ]; then seen=1; gone=0
+    elif [ "$seen" = 1 ]; then gone=$((gone + 1)); fi
+    if [ "$gone" -ge 3 ]; then     # no CC window for about 6 s
+      list="$(wine tasklist 2>/dev/null)"
+      grep -qiE "$ADOBE_APPS" <<<"$list" || { wineserver -k 2>/dev/null; wineserver -w 2>/dev/null; }
+      return
+    fi
+    sleep 2
+  done
 }
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -132,7 +169,10 @@ core_fonts
 log="$ADOBEWINE_HOME/logs/$cmd-$(date +%Y%m%d-%H%M%S).log"
 echo "log: $log"
 start=$SECONDS
-wine "$exe" "${args[@]}" > "$log" 2>&1
+wine "$exe" "${args[@]}" > "$log" 2>&1 &
+wpid=$!
+[ "$cmd" = cc ] && wait_for_cc_close "$wpid"
+wait "$wpid"
 rc=$?
 # The app was closed with its normal close button: stop Wine too if no other Adobe app is open.
 [ "$cmd" != run ] && stop_wine_if_idle
