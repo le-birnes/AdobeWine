@@ -343,11 +343,31 @@ class Hub(Adw.ApplicationWindow):
         self.toasts.add_toast(Adw.Toast(title=msg, timeout=4))
 
 
+def launch_cli(app, args):
+    """Run `adobewine <args>` here, in this sandbox. The app stays alive until it ends."""
+    app.hold()
+    p = subprocess.Popen([AW, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    def wait():
+        p.wait()
+        GLib.idle_add(app.release)
+    threading.Thread(target=wait, daemon=True).start()
+
+
+def on_command_line(app, cl):
+    args = cl.get_arguments()[1:]
+    if args[:1] == ['--launch'] and len(args) >= 2:
+        launch_cli(app, args[1:])          # from a menu icon: no hub window
+    else:
+        (app.get_active_window() or Hub(app)).present()
+    return 0
+
+
 def main():
     app = Adw.Application(application_id=os.environ.get('FLATPAK_ID', 'io.github.le_birnes.AdobeWine'),
-                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
-    app.connect('activate', lambda a: (a.get_active_window() or Hub(a)).present())
-    return app.run(sys.argv[:1])
+                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+    app.connect('command-line', on_command_line)
+    return app.run(sys.argv)
 
 
 if __name__ == '__main__':
