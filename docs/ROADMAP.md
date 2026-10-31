@@ -73,10 +73,8 @@ Dates after M2 depend on what the checklists show.
 - **One file for every distribution** (from 2026-10-24): `CCINSTALLER.flatpak` installs with a double-click on
   Fedora, Mint, Ubuntu, Debian, openSUSE, Arch and the rest, sets everything up and stops at Adobe's sign-in. No
   terminal and no Wine build. Next: updates through the software center, then Flathub.
-- **Everything goes upstream to Wine too** (from 2026-10-23): each fix in AdobeWine is also sent to WineHQ as a
-  merge request, with a test that passes on Windows, so it reaches every Wine user and the patch list here gets
-  shorter with each Wine release. Work in AdobeWine continues meanwhile. Fixes written by contributors go upstream
-  by them or with them credited as author. Heap workarounds and other Adobe-only tweaks stay here.
+- **Not sent to WineHQ:** WineHQ doesn't accept AI-written code, so AdobeWine's own fixes stay here, public under
+  Wine's license. Fixes written by contributors can go upstream by them.
 - A [showreel](https://youtu.be/3Vbzt4cGSQQ) (2026-10-23) made end to end in the seven apps under Wine: it
   exercised pen pressure, 3D text, layout, generated audio, aerender and a Premiere + Media Encoder
   export together. What it found: After Effects' memory use while previewing Cinema 4D comps (see the
@@ -110,7 +108,6 @@ Dates after M2 depend on what the checklists show.
 **Always**
 - Re-run the checklists after each Adobe update; a drop counts as a serious bug.
 - Move to each new Wine release when the tests are green on it (11.19 already applies).
-- Send the generic patches upstream to WineHQ, so there is less to maintain here.
 
 ## How you can help
 
@@ -124,7 +121,7 @@ Dates after M2 depend on what the checklists show.
 - **Patches:** any of the "Next" items above, or anything you hit. Every patch here starts
   with a small test program that shows the bug; see [HOW-IT-WORKS.md](HOW-IT-WORKS.md) and
   [CONTRIBUTING.md](../CONTRIBUTING.md). Wine developers: the patches in
-  [PATCHES.md](PATCHES.md) with origin "AdobeWine" are meant to go upstream, and review there
+  [PATCHES.md](PATCHES.md) stay here, as WineHQ doesn't take AI-written code, and review by contributors
   is very welcome.
 - **This roadmap:** if the priorities look wrong to you, say so in the
   [roadmap discussion](../../../discussions/9). If you want to pick up an item, say so there

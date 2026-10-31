@@ -110,8 +110,8 @@ make it work for everyone else.
 AdobeWine is [Wine](https://www.winehq.org) 11.20, the compatibility layer that also runs Windows games on Steam,
 plus 101 fixes for what Adobe's apps need. Each fix comes from comparing the same task on Windows and under Wine,
 with a small test program that shows the difference. Every fix is listed in [docs/PATCHES.md](docs/PATCHES.md), the
-method is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md), and the fixes are being offered back to the Wine project
-so they reach every Wine user. Which Windows functions Adobe's apps call, and what happens with each one, is
+method is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md), and the code is public under Wine's own license. WineHQ doesn't accept AI-written code, so these fixes aren't
+submitted there. Which Windows functions Adobe's apps call, and what happens with each one, is
 mapped in [docs/DLL-MAP.md](docs/DLL-MAP.md). What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 Thanks to [PhialsBasement](https://github.com/PhialsBasement), whose Adobe installer work for Wine started the
