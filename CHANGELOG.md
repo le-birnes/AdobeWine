@@ -7,11 +7,12 @@
   Microsoft Visual C++ runtime that every Adobe app needs (patches 0093, 0094).
 - **Acrobat Pro installs and works.** Wine can now apply the update patches Acrobat's installer uses (0097, written
   clean-room from a behaviour description and checked against Windows: all 3534 of Acrobat's patches come out
-  identical), and installs the update's files from the right place (0096, 0098). 19 everyday functions tested and
+  identical), and installs the update's files from the right place (0096, 0098). 22 everyday functions tested and
   working: open and read, comments and highlights, adding text, rotating, form fields, combining, extracting and
   deleting pages, export to Word, Excel, PowerPoint, RTF, text, JPEG and PNG, signing with a digital ID, zoom and
   page layout, and creating a PDF from a JPEG, PNG, BMP, TIFF or GIF (0099: Acrobat converts images in a small
-  sandbox and checks who owns its connection to it; Wine now answers as Windows does). Acrobat's Protected Mode is
+  sandbox and checks who owns its connection to it; Wine now answers as Windows does), printing (through Wine's
+  PostScript driver), OCR of a scanned page, and Fill & Sign (text and check marks). Acrobat's Protected Mode is
   switched off (Wine has no sandbox for it).
 - Bridge: 26 everyday functions tested and working (browse, previews, ratings, keywords, metadata, collections,
   stacks, batch rename, Camera Raw, Image Processor, the Export panel, contact sheets to PDF, Filter panel, search,
