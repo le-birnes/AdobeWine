@@ -142,6 +142,11 @@ fi
 # zero at launch on that build, so Photoshop alone reports Windows 10.
 wine winecfg /v win11 >/dev/null 2>&1
 wine reg add 'HKCU\Software\Wine\AppDefaults\Photoshop.exe' /v Version /d win10 /f >/dev/null
+# Acrobat's Protected Mode runs it in an AppContainer sandbox Wine does not have ("AppContainer Incompatibility"
+# at start); Acrobat's own Preferences > Security (Enhanced) setting, off
+for v in bProtectedMode bEnableProtectedModeAppContainer; do
+    wine reg add 'HKCU\Software\Adobe\Adobe Acrobat\DC\Privileged' /v "$v" /t REG_DWORD /d 0 /f >/dev/null
+done
 # WebView2 (the Home screens) presents through a DirectComposition swapchain; only Wine's
 # own dxgi has composition swapchains (patches 0050, 0051), DXVK does not.
 wine reg add 'HKCU\Software\Wine\AppDefaults\msedgewebview2.exe\DllOverrides' /v dxgi /d builtin /f >/dev/null
