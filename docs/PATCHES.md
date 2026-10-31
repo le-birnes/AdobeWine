@@ -1,6 +1,6 @@
 # Patches
 
-AdobeWine is upstream Wine 11.18 plus these patches, applied in order. Each one fixes a
+AdobeWine is upstream Wine 11.20 plus these patches, applied in order. Each one fixes a
 difference between Wine and Windows found by running the same Adobe workflow on both. How each
 problem was found, with measurements and the test programs (in `tests/`), is in
 [DEVLOG.md](DEVLOG.md); the method is in [HOW-IT-WORKS.md](HOW-IT-WORKS.md). Patches marked AdobeWine are meant to go upstream
@@ -102,3 +102,7 @@ to WineHQ; help with that is very welcome.
 | 0089 | d2d1 | A path geometry whose Close failed streams nothing (its figures were freed but still counted): After Effects' Render Queue panel no longer stays blank and stops AE's idle work | AdobeWine |
 | 0090 | winex11 | A plain popup an app activates stays unmanaged: in InDesign, after double-clicking a word, Ctrl shortcuts no longer type the letter (Ctrl+B typed "B") | AdobeWine |
 | 0091 | winex11 | A window owned by an invisible window is made transient for the first visible owner: Illustrator's floating panels (Transform, Color...) show again and no longer block clicks on the canvas | AdobeWine |
+| 0092-0100 | various | Thread start-up, installers, Acrobat's update patches (mspatcha, msi), its sandbox pipes, EndTask. Listed in CHANGELOG.md |
+| 0101 | various | Functions Adobe's apps import that Wine lacked: implemented, forwarded, or answering "nothing here" (docs/DLL-MAP.md) |
+| 0102 | various | Stubs from subsystems Wine lacks return an error instead of aborting the process. The subsystems still do not work |
+| 0103 | crypt32, wintrust | Two signature-check bugs: Acrobat crashed at start, acrotray and AdobeCollabSync aborted |

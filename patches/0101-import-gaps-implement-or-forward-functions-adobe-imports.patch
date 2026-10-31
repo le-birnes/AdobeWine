@@ -1,0 +1,770 @@
+From: AdobeWine
+Subject: [PATCH] Functions Adobe's apps import that Wine lacks: implement or forward them.
+
+From a scan of every binary in the Adobe install folders (5664 files) against Wine's exports (docs/DLL-MAP.md).
+Calling a missing import aborts the process, so a rarely used path could take an app down.
+Real: RegOpenKeyTransacted, RegDeleteKeyTransacted (no transaction, as Wine has none), CreateFileMappingNumaA,
+MFCreateMediaBufferWrapper, VariantCompare, spoolss printer calls and NetWkstaGetInfo (forwards), the *64 marshaling
+names (forwards to the plain ones). Report an honest "nothing here" (no packages, no pointer devices, no private
+namespaces, no enclaves): the rest of the kernel32/kernelbase, user32, powrprof, userenv and wininet entries.
+Test: wine/tests/gapmap.
+
+---
+diff --git a/dlls/advapi32/advapi32.spec b/dlls/advapi32/advapi32.spec
+--- a/dlls/advapi32/advapi32.spec
++++ b/dlls/advapi32/advapi32.spec
+@@ -627,8 +627,8 @@
+ @ stdcall RegDeleteKeyA(long str)
+ @ stdcall -import RegDeleteKeyExA(long str long long)
+ @ stdcall -import RegDeleteKeyExW(long wstr long long)
+-# @ stub RegDeleteKeyTransactedA
+-# @ stub RegDeleteKeyTransactedW
++@ stdcall RegDeleteKeyTransactedA(long str long long long ptr)
++@ stdcall RegDeleteKeyTransactedW(long wstr long long long ptr)
+ @ stdcall -import RegDeleteKeyValueA(long str str)
+ @ stdcall -import RegDeleteKeyValueW(long wstr wstr)
+ @ stdcall RegDeleteKeyW(long wstr)
+@@ -661,8 +661,8 @@
+ @ stdcall RegOpenKeyA(long str ptr)
+ @ stdcall -import RegOpenKeyExA(long str long long ptr)
+ @ stdcall -import RegOpenKeyExW(long wstr long long ptr)
+-# @ stub RegOpenKeyTransactedA
+-# @ stub RegOpenKeyTransactedW
++@ stdcall RegOpenKeyTransactedA(long str long long ptr long ptr)
++@ stdcall RegOpenKeyTransactedW(long wstr long long ptr long ptr)
+ @ stdcall RegOpenKeyW(long wstr ptr)
+ @ stdcall -import RegOpenUserClassesRoot(ptr long long ptr)
+ @ stdcall RegOverridePredefKey(long long)
+diff --git a/dlls/advapi32/registry.c b/dlls/advapi32/registry.c
+--- a/dlls/advapi32/registry.c
++++ b/dlls/advapi32/registry.c
+@@ -686,3 +686,30 @@
+     FIXME("%p: stub\n", base);
+     return ERROR_SUCCESS;
+ }
++
++/******************************************************************************
++ * Transacted registry calls: Wine has no kernel transactions, so these act at once.
++ */
++LSTATUS WINAPI RegOpenKeyTransactedA( HKEY hkey, LPCSTR name, DWORD options, REGSAM access, PHKEY retkey,
++                                      HANDLE transaction, PVOID reserved )
++{
++    return RegOpenKeyExA( hkey, name, options, access, retkey );
++}
++
++LSTATUS WINAPI RegOpenKeyTransactedW( HKEY hkey, LPCWSTR name, DWORD options, REGSAM access, PHKEY retkey,
++                                      HANDLE transaction, PVOID reserved )
++{
++    return RegOpenKeyExW( hkey, name, options, access, retkey );
++}
++
++LSTATUS WINAPI RegDeleteKeyTransactedA( HKEY hkey, LPCSTR name, REGSAM access, DWORD reserved,
++                                        HANDLE transaction, PVOID reserved2 )
++{
++    return RegDeleteKeyExA( hkey, name, access, reserved );
++}
++
++LSTATUS WINAPI RegDeleteKeyTransactedW( HKEY hkey, LPCWSTR name, REGSAM access, DWORD reserved,
++                                        HANDLE transaction, PVOID reserved2 )
++{
++    return RegDeleteKeyExW( hkey, name, access, reserved );
++}
+diff --git a/dlls/kernel32/kernel32.spec b/dlls/kernel32/kernel32.spec
+--- a/dlls/kernel32/kernel32.spec
++++ b/dlls/kernel32/kernel32.spec
+@@ -145,7 +145,7 @@
+ # @ stub AddLocalAlternateComputerNameA
+ # @ stub AddLocalAlternateComputerNameW
+ @ stdcall -import AddRefActCtx(ptr)
+-# @ stub AddSIDToBoundaryDescriptor
++@ stdcall -import AddSIDToBoundaryDescriptor(ptr ptr)
+ # @ stub AddSecureMemoryCacheCallback
+ @ stdcall AddVectoredContinueHandler(long ptr) NTDLL.RtlAddVectoredContinueHandler
+ @ stdcall AddVectoredExceptionHandler(long ptr) NTDLL.RtlAddVectoredExceptionHandler
+@@ -225,7 +225,7 @@
+ @ stdcall -import ClearCommError(long ptr ptr)
+ @ stdcall CloseConsoleHandle(long)
+ @ stdcall -import CloseHandle(long)
+-# @ stub ClosePrivateNamespace
++@ stdcall -import ClosePrivateNamespace(long long)
+ @ stdcall CloseProfileUserMapping()
+ @ stdcall -import ClosePseudoConsole(ptr)
+ @ stub CloseSystemHandle
+@@ -287,7 +287,7 @@
+ @ stdcall -import CreateFileA(str long long ptr long long long)
+ @ stdcall CreateFileTransactedA(str long long ptr long long long ptr ptr ptr)
+ @ stdcall CreateFileMappingA(long ptr long long long str)
+-# @ stub CreateFileMappingNumaA
++@ stdcall CreateFileMappingNumaA(long ptr long long long str long)
+ @ stdcall CreateFileMappingFromApp(long ptr long int64 wstr) kernelbase.CreateFileMappingFromApp
+ @ stdcall -import CreateFileMappingNumaW(long ptr long long long wstr long)
+ @ stdcall -import CreateFileMappingW(long ptr long long long wstr)
+@@ -314,7 +314,7 @@
+ # @ stub CreateNlsSecurityDescriptor
+ @ stdcall -import CreatePipe(ptr ptr ptr long)
+ # @ stub CreatePrivateNamespaceA
+-# @ stub CreatePrivateNamespaceW
++@ stdcall -import CreatePrivateNamespaceW(ptr ptr wstr)
+ @ stdcall -import CreateProcessA(str str ptr ptr long long ptr str ptr ptr)
+ @ stdcall -import CreateProcessAsUserA(long str str ptr ptr long long ptr str ptr ptr)
+ @ stdcall -import CreateProcessAsUserW(long wstr wstr ptr ptr long long ptr wstr ptr ptr)
+@@ -365,7 +365,7 @@
+ @ stdcall -import DefineDosDeviceW(long wstr wstr)
+ @ stdcall -import DelayLoadFailureHook(str str)
+ @ stdcall DeleteAtom(long)
+-# @ stub DeleteBoundaryDescriptor
++@ stdcall -import DeleteBoundaryDescriptor(long)
+ @ stdcall DeleteCriticalSection(ptr) NTDLL.RtlDeleteCriticalSection
+ @ stdcall -import DeleteFiber(ptr)
+ @ stdcall -import DeleteFileA(str)
+@@ -1158,7 +1158,7 @@
+ @ stdcall OpenMutexA(long long str)
+ @ stdcall -import OpenMutexW(long long wstr)
+ # @ stub OpenPrivateNamespaceA
+-# @ stub OpenPrivateNamespaceW
++@ stdcall -import OpenPrivateNamespaceW(ptr wstr)
+ @ stdcall -import OpenProcess(long long long)
+ @ stdcall -import OpenProcessToken(long long ptr)
+ @ stdcall OpenProfileUserMapping()
+@@ -1590,7 +1590,7 @@
+ @ stdcall -import UnlockFileEx(long long long long ptr)
+ @ stdcall -import UnmapViewOfFile(ptr)
+ @ stdcall -import UnmapViewOfFileEx(ptr long)
+-# @ stub UnregisterApplicationRecoveryCallback
++@ stdcall UnregisterApplicationRecoveryCallback()
+ @ stdcall UnregisterApplicationRestart()
+ # @ stub UnregisterConsoleIME
+ @ stdcall UnregisterWait(long)
+@@ -1738,3 +1738,8 @@
+ # Unix files
+ @ cdecl wine_get_unix_file_name(wstr)
+ @ cdecl wine_get_dos_file_name(str)
++@ stdcall -import FindPackagesByPackageFamily(wstr long ptr ptr ptr ptr ptr)
++@ stdcall -import GetPackageApplicationIds(ptr ptr ptr ptr)
++@ stdcall -import IsEnclaveTypeSupported(long)
++@ stdcall -import OpenPackageInfoByFullName(wstr long ptr)
++@ stdcall -import PackageFamilyNameFromId(ptr ptr ptr)
+diff --git a/dlls/kernel32/process.c b/dlls/kernel32/process.c
+--- a/dlls/kernel32/process.c
++++ b/dlls/kernel32/process.c
+@@ -1026,3 +1026,11 @@
+     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+     return FALSE;
+ }
++
++/**********************************************************************
++ *           UnregisterApplicationRecoveryCallback     (KERNEL32.@)
++ */
++HRESULT WINAPI UnregisterApplicationRecoveryCallback(void)
++{
++    return S_OK;
++}
+diff --git a/dlls/kernel32/sync.c b/dlls/kernel32/sync.c
+--- a/dlls/kernel32/sync.c
++++ b/dlls/kernel32/sync.c
+@@ -924,3 +924,12 @@
+                   "ret $4")
+ 
+ #endif  /* __i386__ */
++
++/***********************************************************************
++ *             CreateFileMappingNumaA   (KERNEL32.@)
++ */
++HANDLE WINAPI CreateFileMappingNumaA( HANDLE file, SECURITY_ATTRIBUTES *sa, DWORD protect, DWORD size_high,
++                                      DWORD size_low, LPCSTR name, DWORD node )
++{
++    return CreateFileMappingA( file, sa, protect, size_high, size_low, name );
++}
+diff --git a/dlls/kernelbase/kernelbase.spec b/dlls/kernelbase/kernelbase.spec
+--- a/dlls/kernelbase/kernelbase.spec
++++ b/dlls/kernelbase/kernelbase.spec
+@@ -25,7 +25,7 @@
+ @ stdcall AddMandatoryAce(ptr long long long ptr)
+ @ stdcall AddRefActCtx(ptr)
+ # @ stub AddResourceAttributeAce
+-# @ stub AddSIDToBoundaryDescriptor
++@ stdcall AddSIDToBoundaryDescriptor(ptr ptr)
+ # @ stub AddScopedPolicyIDAce
+ @ stdcall AddVectoredContinueHandler(long ptr) ntdll.RtlAddVectoredContinueHandler
+ @ stdcall AddVectoredExceptionHandler(long ptr) ntdll.RtlAddVectoredExceptionHandler
+@@ -139,7 +139,7 @@
+ # @ stub CloseGlobalizationUserSettingsKey
+ @ stdcall CloseHandle(long)
+ # @ stub ClosePackageInfo
+-# @ stub ClosePrivateNamespace
++@ stdcall ClosePrivateNamespace(long long)
+ @ stdcall ClosePseudoConsole(ptr)
+ # @ stub CloseState
+ # @ stub CloseStateAtom
+@@ -207,7 +207,7 @@
+ @ stdcall CreateMutexW(ptr long wstr)
+ @ stdcall CreateNamedPipeW(wstr long long long long long long ptr)
+ @ stdcall CreatePipe(ptr ptr ptr long)
+-# @ stub CreatePrivateNamespaceW
++@ stdcall CreatePrivateNamespaceW(ptr ptr wstr)
+ @ stdcall CreatePrivateObjectSecurity(ptr ptr ptr long long ptr)
+ @ stdcall CreatePrivateObjectSecurityEx(ptr ptr ptr ptr long long long ptr)
+ @ stdcall CreatePrivateObjectSecurityWithMultipleInheritance(ptr ptr ptr ptr long long long long ptr)
+@@ -255,7 +255,7 @@
+ @ stdcall DelayLoadFailureHook(str str)
+ # @ stub DelayLoadFailureHookLookup
+ @ stdcall DeleteAce(ptr long)
+-# @ stub DeleteBoundaryDescriptor
++@ stdcall DeleteBoundaryDescriptor(long)
+ @ stdcall DeleteCriticalSection(ptr) ntdll.RtlDeleteCriticalSection
+ @ stdcall DeleteFiber(ptr)
+ @ stdcall DeleteFileA(str)
+@@ -380,7 +380,7 @@
+ @ stdcall FindNextFileW(long ptr)
+ @ stdcall FindNextStreamW(long ptr)
+ @ stdcall FindNextVolumeW(long ptr long)
+-# @ stub FindPackagesByPackageFamily
++@ stdcall FindPackagesByPackageFamily(wstr long ptr ptr ptr ptr ptr)
+ @ stdcall FindResourceExW(long wstr wstr long)
+ @ stdcall FindResourceW(long wstr wstr)
+ @ stdcall FindStringOrdinal(long wstr long wstr long long)
+@@ -624,7 +624,7 @@
+ @ stdcall GetOverlappedResult(long ptr ptr long)
+ @ stdcall GetOverlappedResultEx(long ptr ptr long long)
+ # @ stub GetPackageApplicationContext
+-# @ stub GetPackageApplicationIds
++@ stdcall GetPackageApplicationIds(ptr ptr ptr ptr)
+ # @ stub GetPackageApplicationProperty
+ # @ stub GetPackageApplicationPropertyString
+ # @ stub GetPackageApplicationResourcesContext
+@@ -901,7 +901,7 @@
+ @ stdcall IsDebuggerPresent()
+ # @ stub IsDeveloperModeEnabled
+ # @ stub IsDeveloperModePolicyApplied
+-# @ stub IsEnclaveTypeSupported
++@ stdcall IsEnclaveTypeSupported(long)
+ # @ stub IsGlobalizationUserSettingsKeyRedirected
+ @ stdcall IsInternetESCEnabled()
+ @ stdcall IsNLSDefinedString(long long ptr wstr long)
+@@ -1031,9 +1031,9 @@
+ @ stdcall OpenFileMappingW(long long wstr)
+ # @ stub OpenGlobalizationUserSettingsKey
+ @ stdcall OpenMutexW(long long wstr)
+-# @ stub OpenPackageInfoByFullName
++@ stdcall OpenPackageInfoByFullName(wstr long ptr)
+ # @ stub OpenPackageInfoByFullNameForUser
+-# @ stub OpenPrivateNamespaceW
++@ stdcall OpenPrivateNamespaceW(ptr wstr)
+ @ stdcall OpenProcess(long long long)
+ @ stdcall OpenProcessToken(long long ptr)
+ @ stub OpenRegKey
+@@ -1050,7 +1050,7 @@
+ @ stdcall OutputDebugStringW(wstr)
+ # @ stub OverrideRoamingDataModificationTimesInRange
+ # @ stub PackageFamilyNameFromFullName
+-# @ stub PackageFamilyNameFromId
++@ stdcall PackageFamilyNameFromId(ptr ptr ptr)
+ # @ stub PackageFamilyNameFromProductId
+ @ stdcall PackageFullNameFromId(ptr ptr ptr)
+ # @ stub PackageFullNameFromProductId
+diff --git a/dlls/kernelbase/security.c b/dlls/kernelbase/security.c
+--- a/dlls/kernelbase/security.c
++++ b/dlls/kernelbase/security.c
+@@ -1562,3 +1562,66 @@
+     }
+     return set_ntstatus( status );
+ }
++
++/***********************************************************************
++ * Private namespaces need CreateBoundaryDescriptorW, which returns NULL here: they fail as a whole.
++ */
++BOOL WINAPI AddSIDToBoundaryDescriptor( HANDLE *boundary, PSID sid )
++{
++    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
++    return FALSE;
++}
++
++void WINAPI DeleteBoundaryDescriptor( HANDLE boundary )
++{
++}
++
++HANDLE WINAPI CreatePrivateNamespaceW( SECURITY_ATTRIBUTES *sa, void *boundary, const WCHAR *alias )
++{
++    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
++    return NULL;
++}
++
++HANDLE WINAPI OpenPrivateNamespaceW( void *boundary, const WCHAR *alias )
++{
++    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
++    return NULL;
++}
++
++BOOLEAN WINAPI ClosePrivateNamespace( HANDLE handle, ULONG flags )
++{
++    SetLastError( ERROR_INVALID_HANDLE );
++    return FALSE;
++}
++
++/***********************************************************************
++ * Wine has no installed packages.
++ */
++LONG WINAPI FindPackagesByPackageFamily( const WCHAR *family, UINT32 filter, UINT32 *count, WCHAR **names,
++                                         UINT32 *length, WCHAR *buffer, UINT32 *properties )
++{
++    if (count) *count = 0;
++    if (length) *length = 0;
++    return ERROR_SUCCESS;
++}
++
++LONG WINAPI GetPackageApplicationIds( void *info, UINT32 *length, BYTE *buffer, UINT32 *count )
++{
++    return ERROR_INVALID_PARAMETER;
++}
++
++LONG WINAPI OpenPackageInfoByFullName( const WCHAR *name, UINT32 reserved, void **info )
++{
++    return ERROR_NOT_FOUND;
++}
++
++LONG WINAPI PackageFamilyNameFromId( const void *id, UINT32 *length, WCHAR *family )
++{
++    return ERROR_INVALID_PARAMETER;
++}
++
++BOOL WINAPI IsEnclaveTypeSupported( DWORD type )
++{
++    SetLastError( ERROR_NOT_SUPPORTED );
++    return FALSE;
++}
+diff --git a/dlls/mfplat/buffer.c b/dlls/mfplat/buffer.c
+--- a/dlls/mfplat/buffer.c
++++ b/dlls/mfplat/buffer.c
+@@ -2928,3 +2928,127 @@
+     *obj = &buffer->IMediaBuffer_iface;
+     return S_OK;
+ }
++
++struct wrapper_buffer
++{
++    IMFMediaBuffer IMFMediaBuffer_iface;
++    LONG refcount;
++    IMFMediaBuffer *parent;
++    DWORD offset;
++    DWORD max_length;
++    DWORD length;
++};
++
++static struct wrapper_buffer *impl_from_wrapper(IMFMediaBuffer *iface)
++{
++    return CONTAINING_RECORD(iface, struct wrapper_buffer, IMFMediaBuffer_iface);
++}
++
++static HRESULT WINAPI wrapper_buffer_QueryInterface(IMFMediaBuffer *iface, REFIID riid, void **obj)
++{
++    if (IsEqualIID(riid, &IID_IMFMediaBuffer) || IsEqualIID(riid, &IID_IUnknown))
++    {
++        *obj = iface;
++        IMFMediaBuffer_AddRef(iface);
++        return S_OK;
++    }
++    *obj = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI wrapper_buffer_AddRef(IMFMediaBuffer *iface)
++{
++    return InterlockedIncrement(&impl_from_wrapper(iface)->refcount);
++}
++
++static ULONG WINAPI wrapper_buffer_Release(IMFMediaBuffer *iface)
++{
++    struct wrapper_buffer *buffer = impl_from_wrapper(iface);
++    ULONG refcount = InterlockedDecrement(&buffer->refcount);
++
++    if (!refcount)
++    {
++        IMFMediaBuffer_Release(buffer->parent);
++        free(buffer);
++    }
++    return refcount;
++}
++
++static HRESULT WINAPI wrapper_buffer_Lock(IMFMediaBuffer *iface, BYTE **data, DWORD *max_length, DWORD *current_length)
++{
++    struct wrapper_buffer *buffer = impl_from_wrapper(iface);
++    HRESULT hr;
++
++    if (!data) return E_INVALIDARG;
++    if (FAILED(hr = IMFMediaBuffer_Lock(buffer->parent, data, NULL, NULL))) return hr;
++    *data += buffer->offset;
++    if (max_length) *max_length = buffer->max_length;
++    if (current_length) *current_length = buffer->length;
++    return S_OK;
++}
++
++static HRESULT WINAPI wrapper_buffer_Unlock(IMFMediaBuffer *iface)
++{
++    return IMFMediaBuffer_Unlock(impl_from_wrapper(iface)->parent);
++}
++
++static HRESULT WINAPI wrapper_buffer_GetCurrentLength(IMFMediaBuffer *iface, DWORD *length)
++{
++    if (!length) return E_INVALIDARG;
++    *length = impl_from_wrapper(iface)->length;
++    return S_OK;
++}
++
++static HRESULT WINAPI wrapper_buffer_SetCurrentLength(IMFMediaBuffer *iface, DWORD length)
++{
++    struct wrapper_buffer *buffer = impl_from_wrapper(iface);
++
++    if (length > buffer->max_length) return E_INVALIDARG;
++    buffer->length = length;
++    return S_OK;
++}
++
++static HRESULT WINAPI wrapper_buffer_GetMaxLength(IMFMediaBuffer *iface, DWORD *length)
++{
++    if (!length) return E_INVALIDARG;
++    *length = impl_from_wrapper(iface)->max_length;
++    return S_OK;
++}
++
++static const IMFMediaBufferVtbl wrapper_buffer_vtbl =
++{
++    wrapper_buffer_QueryInterface,
++    wrapper_buffer_AddRef,
++    wrapper_buffer_Release,
++    wrapper_buffer_Lock,
++    wrapper_buffer_Unlock,
++    wrapper_buffer_GetCurrentLength,
++    wrapper_buffer_SetCurrentLength,
++    wrapper_buffer_GetMaxLength,
++};
++
++/***********************************************************************
++ *      MFCreateMediaBufferWrapper (mfplat.@)
++ */
++HRESULT WINAPI MFCreateMediaBufferWrapper(IMFMediaBuffer *parent, DWORD offset, DWORD length, IMFMediaBuffer **out)
++{
++    struct wrapper_buffer *buffer;
++    DWORD max_length;
++    HRESULT hr;
++
++    TRACE("%p, %lu, %lu, %p.\n", parent, offset, length, out);
++
++    if (!parent || !out) return E_POINTER;
++    if (FAILED(hr = IMFMediaBuffer_GetMaxLength(parent, &max_length))) return hr;
++    if (offset > max_length || length > max_length - offset) return E_INVALIDARG;
++    if (!(buffer = calloc(1, sizeof(*buffer)))) return E_OUTOFMEMORY;
++
++    buffer->IMFMediaBuffer_iface.lpVtbl = &wrapper_buffer_vtbl;
++    buffer->refcount = 1;
++    IMFMediaBuffer_AddRef(buffer->parent = parent);
++    buffer->offset = offset;
++    buffer->max_length = max_length - offset;
++    buffer->length = length;
++    *out = &buffer->IMFMediaBuffer_iface;
++    return S_OK;
++}
+diff --git a/dlls/mfplat/mfplat.spec b/dlls/mfplat/mfplat.spec
+--- a/dlls/mfplat/mfplat.spec
++++ b/dlls/mfplat/mfplat.spec
+@@ -57,7 +57,7 @@
+ @ stdcall MFCreateMFByteStreamWrapper(ptr ptr)
+ @ stdcall MFCreateMFVideoFormatFromMFMediaType(ptr ptr ptr)
+ @ stdcall MFCreateMediaBufferFromMediaType(ptr int64 long long ptr)
+-@ stub MFCreateMediaBufferWrapper
++@ stdcall MFCreateMediaBufferWrapper(ptr long long ptr)
+ @ stdcall MFCreateMediaEvent(long ptr long ptr ptr)
+ @ stdcall MFCreateMediaType(ptr)
+ @ stdcall MFCreateMediaTypeFromRepresentation(int128 ptr ptr)
+diff --git a/dlls/ole32/ole32.spec b/dlls/ole32/ole32.spec
+--- a/dlls/ole32/ole32.spec
++++ b/dlls/ole32/ole32.spec
+@@ -301,3 +301,7 @@
+ @ stdcall WriteFmtUserTypeStg(ptr long ptr)
+ @ stub WriteOleStg
+ @ stub WriteStringStream
++@ stdcall -arch=win64 HWND_UserFree64(ptr ptr) combase.HWND_UserFree
++@ stdcall -arch=win64 HWND_UserMarshal64(ptr ptr ptr) combase.HWND_UserMarshal
++@ stdcall -arch=win64 HWND_UserSize64(ptr long ptr) combase.HWND_UserSize
++@ stdcall -arch=win64 HWND_UserUnmarshal64(ptr ptr ptr) combase.HWND_UserUnmarshal
+diff --git a/dlls/oleaut32/oleaut32.spec b/dlls/oleaut32/oleaut32.spec
+--- a/dlls/oleaut32/oleaut32.spec
++++ b/dlls/oleaut32/oleaut32.spec
+@@ -417,3 +417,15 @@
+ @ stdcall -private DllGetClassObject(ptr ptr ptr)
+ @ stdcall -private DllRegisterServer()
+ @ stdcall -private DllUnregisterServer()
++@ stdcall -arch=win64 BSTR_UserFree64(ptr ptr) BSTR_UserFree
++@ stdcall -arch=win64 BSTR_UserMarshal64(ptr ptr ptr) BSTR_UserMarshal
++@ stdcall -arch=win64 BSTR_UserSize64(ptr long ptr) BSTR_UserSize
++@ stdcall -arch=win64 BSTR_UserUnmarshal64(ptr ptr ptr) BSTR_UserUnmarshal
++@ stdcall -arch=win64 LPSAFEARRAY_UserFree64(ptr ptr) LPSAFEARRAY_UserFree
++@ stdcall -arch=win64 LPSAFEARRAY_UserMarshal64(ptr ptr ptr) LPSAFEARRAY_UserMarshal
++@ stdcall -arch=win64 LPSAFEARRAY_UserSize64(ptr long ptr) LPSAFEARRAY_UserSize
++@ stdcall -arch=win64 LPSAFEARRAY_UserUnmarshal64(ptr ptr ptr) LPSAFEARRAY_UserUnmarshal
++@ stdcall -arch=win64 VARIANT_UserFree64(ptr ptr) VARIANT_UserFree
++@ stdcall -arch=win64 VARIANT_UserMarshal64(ptr ptr ptr) VARIANT_UserMarshal
++@ stdcall -arch=win64 VARIANT_UserSize64(ptr long ptr) VARIANT_UserSize
++@ stdcall -arch=win64 VARIANT_UserUnmarshal64(ptr ptr ptr) VARIANT_UserUnmarshal
+diff --git a/dlls/powrprof/powrprof.c b/dlls/powrprof/powrprof.c
+--- a/dlls/powrprof/powrprof.c
++++ b/dlls/powrprof/powrprof.c
+@@ -412,3 +412,9 @@
+     }
+     return TRUE;
+ }
++
++DWORD WINAPI PowerReadACValue(HKEY key, const GUID *scheme, const GUID *subgroup, const GUID *setting, ULONG *type,
++                              UCHAR *buffer, DWORD *size)
++{
++    return ERROR_FILE_NOT_FOUND;
++}
+diff --git a/dlls/powrprof/powrprof.spec b/dlls/powrprof/powrprof.spec
+--- a/dlls/powrprof/powrprof.spec
++++ b/dlls/powrprof/powrprof.spec
+@@ -32,3 +32,4 @@
+ @ stdcall WriteGlobalPwrPolicy (ptr)
+ @ stdcall WriteProcessorPwrScheme (long ptr)
+ @ stdcall WritePwrScheme (ptr str str ptr)
++@ stdcall PowerReadACValue(long ptr ptr ptr ptr ptr ptr)
+diff --git a/dlls/propsys/propsys.spec b/dlls/propsys/propsys.spec
+--- a/dlls/propsys/propsys.spec
++++ b/dlls/propsys/propsys.spec
+@@ -153,7 +153,7 @@
+ @ stdcall PropVariantToVariant(ptr ptr)
+ @ stub StgDeserializePropVariant
+ @ stub StgSerializePropVariant
+-@ stub VariantCompare
++@ stdcall VariantCompare(ptr ptr)
+ @ stub VariantGetBooleanElem
+ @ stub VariantGetDoubleElem
+ @ stub VariantGetElementCount
+diff --git a/dlls/propsys/propvar.c b/dlls/propsys/propvar.c
+--- a/dlls/propsys/propvar.c
++++ b/dlls/propsys/propvar.c
+@@ -1369,3 +1369,12 @@
+     }
+     return E_NOTIMPL;
+ }
++
++/******************************************************************
++ *  VariantCompare   (PROPSYS.@)
++ */
++INT WINAPI VariantCompare(const VARIANT *v1, const VARIANT *v2)
++{
++    HRESULT hr = VarCmp((VARIANT *)v1, (VARIANT *)v2, LOCALE_USER_DEFAULT, 0);
++    return hr == VARCMP_LT ? -1 : hr == VARCMP_GT ? 1 : 0;
++}
+diff --git a/dlls/spoolss/spoolss.spec b/dlls/spoolss/spoolss.spec
+--- a/dlls/spoolss/spoolss.spec
++++ b/dlls/spoolss/spoolss.spec
+@@ -17,7 +17,7 @@
+ @ stdcall BuildOtherNamesFromMachineName(ptr ptr)
+ @ stub CallDrvDevModeConversion
+ @ stub CallRouterFindFirstPrinterChangeNotification
+-@ stub ClosePrinter
++@ stdcall ClosePrinter(long) spoolss_ClosePrinter
+ @ stub ClusterSplClose
+ @ stub ClusterSplIsAlive
+ @ stub ClusterSplOpen
+@@ -63,7 +63,7 @@
+ @ stub GetClientUserHandle
+ @ stub GetFormW
+ @ stub GetJobAttributes
+-@ stub GetJobW
++@ stdcall GetJobW(long long long ptr long ptr) spoolss_GetJobW
+ @ stub GetNetworkId
+ @ stub GetPrintProcessorDirectoryW
+ @ stub GetPrinterDataExW
+@@ -71,7 +71,7 @@
+ @ stdcall GetPrinterDriverDirectoryW(wstr wstr long ptr long ptr)
+ @ stub GetPrinterDriverExW
+ @ stub GetPrinterDriverW
+-@ stub GetPrinterW
++@ stdcall GetPrinterW(long long ptr long ptr) spoolss_GetPrinterW
+ @ stdcall ImpersonatePrinterClient(long)
+ @ stdcall InitializeRouter()
+ @ stdcall IsLocalCall()
+@@ -85,7 +85,7 @@
+ @ stub OldGetPrinterDriverW
+ @ stub OpenPrinterExW
+ @ stub OpenPrinterPortW
+-@ stub OpenPrinterW
++@ stdcall OpenPrinterW(wstr ptr ptr) spoolss_OpenPrinterW
+ @ stub PackStrings
+ @ stub PartialReplyPrinterChangeNotification
+ @ stub PlayGdiScriptOnPrinterIC
+@@ -112,7 +112,7 @@
+ @ stub SeekPrinter
+ @ stub SetAllocFailCount
+ @ stub SetFormW
+-@ stub SetJobW
++@ stdcall SetJobW(long long long ptr long) spoolss_SetJobW
+ @ stub SetPortW
+ @ stub SetPrinterDataExW
+ @ stub SetPrinterDataW
+diff --git a/dlls/spoolss/spoolss_main.c b/dlls/spoolss/spoolss_main.c
+--- a/dlls/spoolss/spoolss_main.c
++++ b/dlls/spoolss/spoolss_main.c
+@@ -284,3 +284,29 @@
+     FIXME("() stub\n");
+     return TRUE;
+ }
++
++/* The spooler calls Acrobat's printing uses: winspool has them. */
++BOOL WINAPI spoolss_ClosePrinter(HANDLE printer)
++{
++    return ClosePrinter(printer);
++}
++
++BOOL WINAPI spoolss_OpenPrinterW(WCHAR *name, HANDLE *printer, PRINTER_DEFAULTSW *defaults)
++{
++    return OpenPrinterW(name, printer, defaults);
++}
++
++BOOL WINAPI spoolss_GetPrinterW(HANDLE printer, DWORD level, BYTE *buffer, DWORD size, DWORD *needed)
++{
++    return GetPrinterW(printer, level, buffer, size, needed);
++}
++
++BOOL WINAPI spoolss_GetJobW(HANDLE printer, DWORD id, DWORD level, BYTE *buffer, DWORD size, DWORD *needed)
++{
++    return GetJobW(printer, id, level, buffer, size, needed);
++}
++
++BOOL WINAPI spoolss_SetJobW(HANDLE printer, DWORD id, DWORD level, BYTE *buffer, DWORD command)
++{
++    return SetJobW(printer, id, level, buffer, command);
++}
+diff --git a/dlls/user32/input.c b/dlls/user32/input.c
+--- a/dlls/user32/input.c
++++ b/dlls/user32/input.c
+@@ -916,3 +916,31 @@
+ {
+     FIXME( "p1 %p p2 %p stub!\n", p1, p2 );
+ }
++
++/**********************************************************************
++ *              SkipPointerFrameMessages (USER32.@)
++ */
++BOOL WINAPI SkipPointerFrameMessages( UINT32 id )
++{
++    return TRUE;
++}
++
++/**********************************************************************
++ *              GetPointerDevice (USER32.@)
++ *
++ * Wine reports no pointer devices.
++ */
++BOOL WINAPI GetPointerDevice( HANDLE device, POINTER_DEVICE_INFO *info )
++{
++    SetLastError( ERROR_INVALID_PARAMETER );
++    return FALSE;
++}
++
++/**********************************************************************
++ *              GetPointerInputTransform (USER32.@)
++ */
++BOOL WINAPI GetPointerInputTransform( UINT32 id, UINT32 count, INPUT_TRANSFORM *transform )
++{
++    SetLastError( ERROR_INVALID_PARAMETER );
++    return FALSE;
++}
+diff --git a/dlls/user32/user32.spec b/dlls/user32/user32.spec
+--- a/dlls/user32/user32.spec
++++ b/dlls/user32/user32.spec
+@@ -625,7 +625,7 @@
+ @ stdcall GetParent(long)
+ @ stdcall GetPhysicalCursorPos(ptr)
+ # @ stub GetPointerCursorId
+-# @ stub GetPointerDevice
++@ stdcall GetPointerDevice(long ptr)
+ # @ stub GetPointerDeviceCursors
+ # @ stub GetPointerDeviceInputSpace
+ # @ stub GetPointerDeviceOrientation
+@@ -641,7 +641,7 @@
+ @ stdcall GetPointerFrameTouchInfoHistory(long ptr ptr ptr)
+ @ stdcall GetPointerInfo(long ptr)
+ @ stdcall GetPointerInfoHistory(long ptr ptr)
+-# @ stub GetPointerInputTransform
++@ stdcall GetPointerInputTransform(long long ptr)
+ @ stdcall GetPointerPenInfo(long ptr)
+ @ stdcall GetPointerPenInfoHistory(long ptr ptr)
+ @ stdcall GetPointerTouchInfo(long ptr)
+@@ -1139,7 +1139,7 @@
+ @ stdcall ShutdownBlockReasonDestroy(long)
+ # @ stub ShutdownBlockReasonQuery
+ # @ stub SignalRedirectionStartComplete
+-# @ stub SkipPointerFrameMessages
++@ stdcall SkipPointerFrameMessages(long)
+ # @ stub SoftModalMessageBox
+ # @ stub SoundSentry
+ @ stdcall SubtractRect(ptr ptr ptr)
+diff --git a/dlls/userenv/userenv.spec b/dlls/userenv/userenv.spec
+--- a/dlls/userenv/userenv.spec
++++ b/dlls/userenv/userenv.spec
+@@ -22,3 +22,4 @@
+ @ stdcall RegisterGPNotification(long long)
+ @ stdcall UnloadUserProfile(ptr ptr)
+ @ stdcall UnregisterGPNotification(long)
++@ stdcall DeriveAppContainerSidFromAppContainerName(wstr ptr)
+diff --git a/dlls/userenv/userenv_main.c b/dlls/userenv/userenv_main.c
+--- a/dlls/userenv/userenv_main.c
++++ b/dlls/userenv/userenv_main.c
+@@ -696,3 +696,8 @@
+ 
+     return E_NOTIMPL;
+ }
++
++HRESULT WINAPI DeriveAppContainerSidFromAppContainerName( const WCHAR *name, PSID *sid )
++{
++    return E_NOTIMPL;
++}
+diff --git a/dlls/wininet/cookie.c b/dlls/wininet/cookie.c
+--- a/dlls/wininet/cookie.c
++++ b/dlls/wininet/cookie.c
+@@ -1270,3 +1270,23 @@
+ 
+     LeaveCriticalSection(&cookie_cs);
+ }
++
++/***********************************************************************
++ *           InternetGetCookieEx2 (WININET.@)
++ *
++ * Not implemented: reports no cookies.
++ */
++DWORD WINAPI InternetGetCookieEx2(const WCHAR *url, const WCHAR *name, DWORD flags, void **cookies, DWORD *count)
++{
++    if (!cookies || !count) return ERROR_INVALID_PARAMETER;
++    *cookies = NULL;
++    *count = 0;
++    return ERROR_SUCCESS;
++}
++
++/***********************************************************************
++ *           InternetFreeCookies (WININET.@)
++ */
++void WINAPI InternetFreeCookies(void *cookies, DWORD count)
++{
++}
+diff --git a/dlls/wininet/wininet.spec b/dlls/wininet/wininet.spec
+--- a/dlls/wininet/wininet.spec
++++ b/dlls/wininet/wininet.spec
+@@ -247,3 +247,5 @@
+ @ stdcall UnlockUrlCacheEntryStream(ptr long)
+ @ stub UpdateUrlCacheContentPath
+ @ stub UrlZonesDetach
++@ stdcall InternetGetCookieEx2(wstr wstr long ptr ptr)
++@ stdcall InternetFreeCookies(ptr long)
+diff --git a/dlls/wkscli/wkscli.spec b/dlls/wkscli/wkscli.spec
+--- a/dlls/wkscli/wkscli.spec
++++ b/dlls/wkscli/wkscli.spec
+@@ -12,7 +12,7 @@
+ @ stdcall NetUseEnum( str long ptr long ptr ptr ptr )
+ @ stdcall NetUseGetInfo( str str long ptr )
+ @ stub NetValidateName
+-@ stub NetWkstaGetInfo( str long ptr )
++@ stdcall NetWkstaGetInfo(wstr long ptr) netapi32.NetWkstaGetInfo
+ @ stub NetWkstaSetInfo
+ @ stub NetWkstaStatisticsGet
+ @ stub NetWkstaTransportAdd

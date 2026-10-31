@@ -1,18 +1,21 @@
 # AdobeWine
 
-**Run Adobe Creative Cloud on Linux: Photoshop, Illustrator, Premiere Pro and more.**
+**Run Adobe Creative Cloud on Linux: Photoshop, Illustrator, Premiere Pro, Lightroom, Acrobat and more.**
 
 Hi, and welcome! Thanks for stopping by.
 
 AdobeWine is for people who would like to try Linux but need Adobe's apps for their work. You install it, sign
 in with your own Adobe account, and use the apps as usual, with your graphics card doing the heavy lifting.
 
+It's made for people who just want to enjoy their software: one package to install, no Wine knowledge needed.
+AI was used as a tool to build it, and we say so plainly: see [Why this exists](#why-this-exists).
+
 **See it in action:** [a short showreel (1:24)](https://youtu.be/3Vbzt4cGSQQ), made entirely in these apps on
 Linux, from the painting to the final export.
 
-> **Early testing (0.4.1).** AdobeWine is built and tested day to day on one Arch-based laptop (CachyOS, NVIDIA
-> RTX 4070). The one-file installer also runs on Fedora, Ubuntu, Debian, Linux Mint, openSUSE and others, but
-> those have had less real-world use. If you try it, please tell us how it went, good or bad: it really helps.
+> **Still early (0.5.0).** AdobeWine is built and tested day to day on one Arch-based laptop (CachyOS, NVIDIA RTX
+> 4070). The installer also runs on Fedora, Ubuntu, Debian, Linux Mint, openSUSE and others, but those have had less
+> real-world use. If you try it, please tell us how it went, good or bad: it really helps.
 
 ## Install it (about 2 minutes, plus Adobe's download)
 
@@ -50,7 +53,10 @@ anything is sent. More help: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 | Audition | Recording, multitrack, effects, noise reduction, mixdown |
 | After Effects | Opens and renders real projects, 3D text; less tested |
 | InDesign | Layout, styles, tables, placed images, PDF export; less tested |
-| Bridge | Opens; not tested yet |
+| Lightroom Classic | Import, ratings, keywords, collections, Develop, AI masking, export to JPEG, TIFF, PSD and DNG |
+| Lightroom | Opens, edits and exports; less tested |
+| Bridge | Browsing, previews, metadata, batch rename, Camera Raw, Image Processor, contact sheets |
+| Acrobat Pro | Read, comment, edit, combine, export to Word, Excel and PowerPoint, sign, OCR, print. Protected Mode is off |
 
 Details for each app: [docs/STATUS.md](docs/STATUS.md).
 
@@ -68,8 +74,14 @@ Details for each app: [docs/STATUS.md](docs/STATUS.md).
 
 ## Other ways to install
 
-- **Arch Linux, CachyOS, EndeavourOS, Manjaro, Garuda:** the `adobewine` / `adobewine-bin` packages, the platform
-  AdobeWine is developed on. See [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md).
+- **Arch Linux, CachyOS, EndeavourOS, Manjaro, Garuda:** one command, on the platform AdobeWine is developed on:
+
+  ```sh
+  sudo pacman -U https://github.com/le-birnes/AdobeWine/releases/download/v0.5.0/adobewine-0.5.0-1-x86_64.pkg.tar.zst
+  adobewine setup
+  ```
+
+  Then see [docs/INSTALL-ARCH.md](docs/INSTALL-ARCH.md). The AUR packages are still waiting for registration.
 - **Gentoo:** the `::snakebyte` overlay, maintained outside this project. See
   [docs/INSTALL-GENTOO.md](docs/INSTALL-GENTOO.md).
 - **Build it yourself, any distribution:** [docs/INSTALL.md](docs/INSTALL.md).
@@ -96,10 +108,11 @@ make it work for everyone else.
 ## How it works (for the curious)
 
 AdobeWine is [Wine](https://www.winehq.org) 11.20, the compatibility layer that also runs Windows games on Steam,
-plus 94 fixes for what Adobe's apps need. Each fix comes from comparing the same task on Windows and under Wine,
+plus 101 fixes for what Adobe's apps need. Each fix comes from comparing the same task on Windows and under Wine,
 with a small test program that shows the difference. Every fix is listed in [docs/PATCHES.md](docs/PATCHES.md), the
 method is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md), and the fixes are being offered back to the Wine project
-so they reach every Wine user. What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+so they reach every Wine user. Which Windows functions Adobe's apps call, and what happens with each one, is
+mapped in [docs/DLL-MAP.md](docs/DLL-MAP.md). What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 Thanks to [PhialsBasement](https://github.com/PhialsBasement), whose Adobe installer work for Wine started the
 first patches, and to NickPittas, switch87, nvb-uy, Cikappa2904 and everyone who has sent fixes, tests and reports.

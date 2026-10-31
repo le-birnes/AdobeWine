@@ -1,0 +1,941 @@
+From: AdobeWine
+Subject: [PATCH] Stubs Adobe's apps import from subsystems Wine lacks fail cleanly.
+
+WinUSB, Bluetooth GATT, ESE, WebSocket, filter manager, event tracing, TPM, and a few crypt32 and rpcrt4 calls were "@ stub", and
+calling one aborts the process. They now return the error a machine without that subsystem gives, so code that checks
+for the feature carries on. Nothing here makes those subsystems work.
+Test: wine/tests/gapmap.
+
+---
+diff --git a/dlls/atmlib/Makefile.in b/dlls/atmlib/Makefile.in
+--- a/dlls/atmlib/Makefile.in
++++ b/dlls/atmlib/Makefile.in
+@@ -3,4 +3,5 @@
+ EXTRADLLFLAGS = -Wb,--prefer-native
+ 
+ SOURCES = \
++	notsup.c \
+ 	main.c
+diff --git a/dlls/atmlib/atmlib.spec b/dlls/atmlib/atmlib.spec
+--- a/dlls/atmlib/atmlib.spec
++++ b/dlls/atmlib/atmlib.spec
+@@ -33,14 +33,14 @@
+ @ stub ATMGetFontInfoA
+ @ stub ATMGetFontInfoW
+ @ stub ATMGetFontPaths
+-@ stub ATMGetFontPathsA
++@ stdcall ATMGetFontPathsA(ptr ptr ptr) aw_ATMGetFontPathsA
+ @ stub ATMGetFontPathsW
+ @ stub ATMGetGlyphList
+ @ stub ATMGetGlyphListA
+ @ stub ATMGetGlyphListW
+ @ stub ATMGetMenuName
+-@ stub ATMGetMenuNameA
+-@ stub ATMGetMenuNameW
++@ stdcall ATMGetMenuNameA(ptr ptr ptr) aw_ATMGetMenuNameA
++@ stdcall ATMGetMenuNameW(ptr ptr ptr) aw_ATMGetMenuNameW
+ @ stub ATMGetNtmFields
+ @ stub ATMGetNtmFieldsA
+ @ stub ATMGetNtmFieldsW
+@@ -48,8 +48,8 @@
+ @ stub ATMGetOutlineA
+ @ stub ATMGetOutlineW
+ @ stub ATMGetPostScriptName
+-@ stub ATMGetPostScriptNameA
+-@ stub ATMGetPostScriptNameW
++@ stdcall ATMGetPostScriptNameA(ptr ptr ptr) aw_ATMGetPostScriptNameA
++@ stdcall ATMGetPostScriptNameW(ptr ptr ptr) aw_ATMGetPostScriptNameW
+ @ stub ATMGetVersion
+ @ stub ATMGetVersionEx
+ @ stub ATMGetVersionExA
+diff --git a/dlls/bluetoothapis/Makefile.in b/dlls/bluetoothapis/Makefile.in
+--- a/dlls/bluetoothapis/Makefile.in
++++ b/dlls/bluetoothapis/Makefile.in
+@@ -3,6 +3,7 @@
+ IMPORTS = setupapi cfgmgr32 user32
+ 
+ SOURCES = \
++	notsup.c \
+ 	bluetoothapis.rc \
+ 	gatt.c \
+ 	main.c \
+diff --git a/dlls/bluetoothapis/bluetoothapis.spec b/dlls/bluetoothapis/bluetoothapis.spec
+--- a/dlls/bluetoothapis/bluetoothapis.spec
++++ b/dlls/bluetoothapis/bluetoothapis.spec
+@@ -37,13 +37,13 @@
+ @ stdcall BluetoothGATTGetCharacteristicValue(ptr ptr long ptr ptr long)
+ @ stdcall BluetoothGATTGetCharacteristics(ptr ptr long ptr ptr long)
+ @ stub BluetoothGATTGetDescriptorValue
+-@ stub BluetoothGATTGetDescriptors
++@ stdcall BluetoothGATTGetDescriptors(ptr ptr ptr ptr ptr ptr) aw_BluetoothGATTGetDescriptors
+ @ stub BluetoothGATTGetIncludedServices
+ @ stdcall BluetoothGATTGetServices(ptr long ptr ptr long)
+-@ stub BluetoothGATTRegisterEvent
+-@ stub BluetoothGATTSetCharacteristicValue
+-@ stub BluetoothGATTSetDescriptorValue
+-@ stub BluetoothGATTUnregisterEvent
++@ stdcall BluetoothGATTRegisterEvent(ptr ptr ptr ptr ptr ptr ptr) aw_BluetoothGATTRegisterEvent
++@ stdcall BluetoothGATTSetCharacteristicValue(ptr ptr ptr ptr ptr ptr) aw_BluetoothGATTSetCharacteristicValue
++@ stdcall BluetoothGATTSetDescriptorValue(ptr ptr ptr ptr) aw_BluetoothGATTSetDescriptorValue
++@ stdcall BluetoothGATTUnregisterEvent(ptr ptr) aw_BluetoothGATTUnregisterEvent
+ @ stdcall BluetoothGetDeviceInfo(ptr long)
+ @ stub BluetoothGetLocalServiceInfo
+ @ stdcall BluetoothGetRadioInfo(ptr ptr)
+diff --git a/dlls/crypt32/Makefile.in b/dlls/crypt32/Makefile.in
+--- a/dlls/crypt32/Makefile.in
++++ b/dlls/crypt32/Makefile.in
+@@ -11,6 +11,7 @@
+ VER_PRODUCTVERSION      = 5,131,2600,1243
+ 
+ SOURCES = \
++	notsup.c \
+ 	base64.c \
+ 	cert.c \
+ 	chain.c \
+diff --git a/dlls/crypt32/crypt32.spec b/dlls/crypt32/crypt32.spec
+--- a/dlls/crypt32/crypt32.spec
++++ b/dlls/crypt32/crypt32.spec
+@@ -113,7 +113,7 @@
+ @ stdcall CryptDecodeObject(long str ptr long long ptr ptr)
+ @ stdcall CryptDecodeObjectEx(long str ptr long long ptr ptr ptr)
+ @ stub CryptDecryptAndVerifyMessageSignature
+-@ stub CryptDecryptMessage
++@ stdcall CryptDecryptMessage(ptr ptr ptr ptr ptr ptr) aw_CryptDecryptMessage
+ @ stdcall CryptEncodeObject(long str ptr ptr ptr)
+ @ stdcall CryptEncodeObjectEx(long str ptr long ptr ptr ptr)
+ @ stdcall CryptEncryptMessage(ptr long ptr ptr long ptr ptr)
+@@ -244,3 +244,4 @@
+ @ stub RegQueryInfoKeyU
+ @ stub RegQueryValueExU
+ @ stub RegSetValueExU
++@ stdcall CryptExportPublicKeyInfoFromBCryptKeyHandle(ptr ptr ptr ptr ptr ptr ptr) aw_CryptExportPublicKeyInfoFromBCryptKeyHandle
+diff --git a/dlls/esent/Makefile.in b/dlls/esent/Makefile.in
+--- a/dlls/esent/Makefile.in
++++ b/dlls/esent/Makefile.in
+@@ -1,3 +1,5 @@
+ MODULE = esent.dll
+ 
+ EXTRADLLFLAGS = -Wb,--prefer-native
++
++SOURCES = notsup.c
+diff --git a/dlls/esent/esent.spec b/dlls/esent/esent.spec
+--- a/dlls/esent/esent.spec
++++ b/dlls/esent/esent.spec
+@@ -6,7 +6,7 @@
+ @ stub JetAddColumnW
+ @ stub JetAttachDatabase2
+ @ stub JetAttachDatabase2A
+-@ stub JetAttachDatabase2W
++@ stdcall JetAttachDatabase2W(ptr ptr ptr ptr) aw_JetAttachDatabase2W
+ @ stub JetAttachDatabase
+ @ stub JetAttachDatabaseA
+ @ stub JetAttachDatabaseW
+@@ -26,14 +26,14 @@
+ @ stub JetBeginExternalBackupInstance
+ @ stub JetBeginSession
+ @ stub JetBeginSessionA
+-@ stub JetBeginSessionW
++@ stdcall JetBeginSessionW(ptr ptr ptr ptr) aw_JetBeginSessionW
+ @ stub JetBeginSurrogateBackup
+ @ stub JetBeginTransaction2
+ @ stub JetBeginTransaction
+-@ stub JetCloseDatabase
++@ stdcall JetCloseDatabase(ptr ptr ptr) aw_JetCloseDatabase
+ @ stub JetCloseFile
+ @ stub JetCloseFileInstance
+-@ stub JetCloseTable
++@ stdcall JetCloseTable(ptr ptr) aw_JetCloseTable
+ @ stub JetCommitTransaction
+ @ stub JetCompact
+ @ stub JetCompactA
+@@ -65,7 +65,7 @@
+ @ stub JetCreateInstance2W
+ @ stub JetCreateInstance
+ @ stub JetCreateInstanceA
+-@ stub JetCreateInstanceW
++@ stdcall JetCreateInstanceW(ptr ptr) aw_JetCreateInstanceW
+ @ stub JetCreateTable
+ @ stub JetCreateTableA
+ @ stub JetCreateTableColumnIndex2
+@@ -105,7 +105,7 @@
+ @ stub JetDeleteTableW
+ @ stub JetDetachDatabase2
+ @ stub JetDetachDatabase2A
+-@ stub JetDetachDatabase2W
++@ stdcall JetDetachDatabase2W(ptr ptr ptr) aw_JetDetachDatabase2W
+ @ stub JetDetachDatabase
+ @ stub JetDetachDatabaseA
+ @ stub JetDetachDatabaseW
+@@ -121,7 +121,7 @@
+ @ stub JetEndExternalBackup
+ @ stub JetEndExternalBackupInstance2
+ @ stub JetEndExternalBackupInstance
+-@ stub JetEndSession
++@ stdcall JetEndSession(ptr ptr) aw_JetEndSession
+ @ stub JetEndSurrogateBackup
+ @ stub JetEnumerateColumns
+ @ stub JetEscrowUpdate
+@@ -189,10 +189,10 @@
+ @ stub JetGetSessionInfo
+ @ stub JetGetSystemParameter
+ @ stub JetGetSystemParameterA
+-@ stub JetGetSystemParameterW
++@ stdcall JetGetSystemParameterW(ptr ptr ptr ptr ptr ptr) aw_JetGetSystemParameterW
+ @ stub JetGetTableColumnInfo
+ @ stub JetGetTableColumnInfoA
+-@ stub JetGetTableColumnInfoW
++@ stdcall JetGetTableColumnInfoW(ptr ptr ptr ptr ptr ptr) aw_JetGetTableColumnInfoW
+ @ stub JetGetTableIndexInfo
+ @ stub JetGetTableIndexInfoA
+ @ stub JetGetTableIndexInfoW
+@@ -214,10 +214,10 @@
+ @ stub JetInit3
+ @ stub JetInit3A
+ @ stub JetInit3W
+-@ stub JetInit
++@ stdcall JetInit(ptr) aw_JetInit
+ @ stub JetIntersectIndexes
+ @ stub JetMakeKey
+-@ stub JetMove
++@ stdcall JetMove(ptr ptr ptr ptr) aw_JetMove
+ @ stub JetOSSnapshotAbort
+ @ stub JetOSSnapshotEnd
+ @ stub JetOSSnapshotFreeze
+@@ -233,7 +233,7 @@
+ @ stub JetOSSnapshotTruncateLogInstance
+ @ stub JetOpenDatabase
+ @ stub JetOpenDatabaseA
+-@ stub JetOpenDatabaseW
++@ stdcall JetOpenDatabaseW(ptr ptr ptr ptr ptr) aw_JetOpenDatabaseW
+ @ stub JetOpenFile
+ @ stub JetOpenFileA
+ @ stub JetOpenFileInstance
+@@ -245,7 +245,7 @@
+ @ stub JetOpenFileW
+ @ stub JetOpenTable
+ @ stub JetOpenTableA
+-@ stub JetOpenTableW
++@ stdcall JetOpenTableW(ptr ptr ptr ptr ptr ptr ptr) aw_JetOpenTableW
+ @ stub JetOpenTempTable2
+ @ stub JetOpenTempTable3
+ @ stub JetOpenTempTable
+@@ -279,7 +279,7 @@
+ @ stub JetRestoreInstanceA
+ @ stub JetRestoreInstanceW
+ @ stub JetRestoreW
+-@ stub JetRetrieveColumn
++@ stdcall JetRetrieveColumn(ptr ptr ptr ptr ptr ptr ptr ptr) aw_JetRetrieveColumn
+ @ stub JetRetrieveColumns
+ @ stub JetRetrieveKey
+ @ stub JetRetrieveTaggedColumnList
+@@ -312,7 +312,7 @@
+ @ stub JetSetSessionContext
+ @ stub JetSetSystemParameter
+ @ stub JetSetSystemParameterA
+-@ stub JetSetSystemParameterW
++@ stdcall JetSetSystemParameterW(ptr ptr ptr ptr ptr) aw_JetSetSystemParameterW
+ @ stub JetSetTableSequential
+ @ stub JetSnapshotStart
+ @ stub JetSnapshotStartA
+@@ -323,7 +323,7 @@
+ @ stub JetStopService
+ @ stub JetStopServiceInstance
+ @ stub JetTerm2
+-@ stub JetTerm
++@ stdcall JetTerm(ptr) aw_JetTerm
+ @ stub JetTest
+ @ stub JetTracing
+ @ stub JetTruncateLog
+diff --git a/dlls/fltlib/Makefile.in b/dlls/fltlib/Makefile.in
+--- a/dlls/fltlib/Makefile.in
++++ b/dlls/fltlib/Makefile.in
+@@ -4,4 +4,5 @@
+ VER_PRODUCTVERSION      = 5,1,2600,5512
+ 
+ SOURCES = \
++	notsup.c \
+ 	fltlib.c
+diff --git a/dlls/fltlib/fltlib.spec b/dlls/fltlib/fltlib.spec
+--- a/dlls/fltlib/fltlib.spec
++++ b/dlls/fltlib/fltlib.spec
+@@ -9,7 +9,7 @@
+ @ stub FilterFindNext
+ @ stub FilterGetDosName
+ @ stub FilterGetInformation
+-@ stub FilterGetMessage
++@ stdcall FilterGetMessage(ptr ptr ptr ptr) aw_FilterGetMessage
+ @ stub FilterInstanceClose
+ @ stub FilterInstanceCreate
+ @ stub FilterInstanceFindClose
+@@ -17,8 +17,8 @@
+ @ stub FilterInstanceFindNext
+ @ stub FilterInstanceGetInformation
+ @ stdcall FilterLoad(wstr)
+-@ stub FilterReplyMessage
+-@ stub FilterSendMessage
++@ stdcall FilterReplyMessage(ptr ptr ptr) aw_FilterReplyMessage
++@ stdcall FilterSendMessage(ptr ptr ptr ptr ptr ptr) aw_FilterSendMessage
+ @ stdcall FilterUnload(wstr)
+ @ stub FilterVolumeClose
+ @ stub FilterVolumeFindClose
+diff --git a/dlls/ncrypt/Makefile.in b/dlls/ncrypt/Makefile.in
+--- a/dlls/ncrypt/Makefile.in
++++ b/dlls/ncrypt/Makefile.in
+@@ -3,4 +3,5 @@
+ IMPORTS   = bcrypt
+ 
+ SOURCES = \
++	notsup.c \
+ 	main.c
+diff --git a/dlls/ncrypt/ncrypt.spec b/dlls/ncrypt/ncrypt.spec
+--- a/dlls/ncrypt/ncrypt.spec
++++ b/dlls/ncrypt/ncrypt.spec
+@@ -59,12 +59,12 @@
+ @ stub GetSChannelInterface
+ @ stub NCryptCloseKeyProtector
+ @ stub NCryptCloseProtectionDescriptor
+-@ stub NCryptCreateClaim
++@ stdcall NCryptCreateClaim(ptr ptr ptr ptr ptr ptr ptr ptr) aw_NCryptCreateClaim
+ @ stdcall NCryptCreatePersistedKey(long ptr wstr wstr long long)
+ @ stub NCryptCreateProtectionDescriptor
+ @ stdcall NCryptDecrypt(long ptr long ptr ptr long ptr long)
+ @ stdcall NCryptDeleteKey(long long)
+-@ stub NCryptDeriveKey
++@ stdcall NCryptDeriveKey(ptr ptr ptr ptr ptr ptr ptr) aw_NCryptDeriveKey
+ @ stub NCryptDuplicateKeyProtectorHandle
+ @ stdcall NCryptEncrypt(long ptr long ptr ptr long ptr long)
+ @ stdcall NCryptEnumAlgorithms(long long ptr ptr long)
+@@ -88,7 +88,7 @@
+ @ stub NCryptProtectSecret
+ @ stub NCryptQueryProtectionDescriptorName
+ @ stub NCryptRegisterProtectionDescriptorName
+-@ stub NCryptSecretAgreement
++@ stdcall NCryptSecretAgreement(ptr ptr ptr ptr) aw_NCryptSecretAgreement
+ @ stub NCryptSetAuditingInterface
+ @ stdcall NCryptSetProperty(ptr wstr ptr long long)
+ @ stdcall NCryptSignHash(long ptr ptr long ptr long ptr long)
+diff --git a/dlls/rpcrt4/Makefile.in b/dlls/rpcrt4/Makefile.in
+--- a/dlls/rpcrt4/Makefile.in
++++ b/dlls/rpcrt4/Makefile.in
+@@ -7,6 +7,7 @@
+ VER_PRODUCTVERSION = 5,1,2600,2180
+ 
+ SOURCES = \
++	notsup.c \
+ 	cproxy.c \
+ 	cpsf.c \
+ 	cstub.c \
+diff --git a/dlls/rpcrt4/rpcrt4.spec b/dlls/rpcrt4/rpcrt4.spec
+--- a/dlls/rpcrt4/rpcrt4.spec
++++ b/dlls/rpcrt4/rpcrt4.spec
+@@ -531,3 +531,5 @@
+ @ stub tree_into_ndr
+ @ stub tree_peek_ndr
+ @ stub tree_size_ndr
++@ stdcall I_RpcOpenClientProcess(ptr ptr ptr) aw_I_RpcOpenClientProcess
++@ stdcall NdrStubCall3(ptr ptr ptr ptr) aw_NdrStubCall3
+diff --git a/dlls/tbs/Makefile.in b/dlls/tbs/Makefile.in
+--- a/dlls/tbs/Makefile.in
++++ b/dlls/tbs/Makefile.in
+@@ -1,4 +1,5 @@
+ MODULE    = tbs.dll
+ 
+ SOURCES = \
++	notsup.c \
+ 	tbs.c
+diff --git a/dlls/tbs/tbs.spec b/dlls/tbs/tbs.spec
+--- a/dlls/tbs/tbs.spec
++++ b/dlls/tbs/tbs.spec
+@@ -9,7 +9,7 @@
+ @ stdcall Tbsi_GetDeviceInfo(long ptr)
+ @ stub Tbsi_Get_OwnerAuth
+ @ stub Tbsi_Get_TCG_Log
+-@ stub Tbsi_Get_TCG_Log_Ex
++@ stdcall Tbsi_Get_TCG_Log_Ex(ptr ptr ptr) aw_Tbsi_Get_TCG_Log_Ex
+ @ stub Tbsi_Physical_Presence_Command
+ @ stub Tbsi_Revoke_Attestation
+ @ stub Tbsi_ShaHash
+diff --git a/dlls/tdh/Makefile.in b/dlls/tdh/Makefile.in
+--- a/dlls/tdh/Makefile.in
++++ b/dlls/tdh/Makefile.in
+@@ -5,4 +5,5 @@
+ VER_PRODUCTVERSION      = 10,0,16299,15
+ 
+ SOURCES = \
++	notsup.c \
+ 	tdh_main.c
+diff --git a/dlls/tdh/tdh.spec b/dlls/tdh/tdh.spec
+--- a/dlls/tdh/tdh.spec
++++ b/dlls/tdh/tdh.spec
+@@ -13,12 +13,12 @@
+ @ stub TdhFormatProperty
+ @ stub TdhGetAllEventsInformation
+ @ stub TdhGetDecodingParameter
+-@ stub TdhGetEventInformation
++@ stdcall TdhGetEventInformation(ptr ptr ptr ptr ptr) aw_TdhGetEventInformation
+ @ stub TdhGetEventMapInformation
+ @ stub TdhGetManifestEventInformation
+-@ stub TdhGetProperty
++@ stdcall TdhGetProperty(ptr ptr ptr ptr ptr ptr ptr ptr) aw_TdhGetProperty
+ @ stub TdhGetPropertyOffsetAndSize
+-@ stub TdhGetPropertySize
++@ stdcall TdhGetPropertySize(ptr ptr ptr ptr ptr ptr) aw_TdhGetPropertySize
+ @ stub TdhGetWppMessage
+ @ stub TdhGetWppProperty
+ @ stdcall TdhLoadManifest(wstr)
+diff --git a/dlls/websocket/Makefile.in b/dlls/websocket/Makefile.in
+--- a/dlls/websocket/Makefile.in
++++ b/dlls/websocket/Makefile.in
+@@ -1,4 +1,5 @@
+ MODULE    = websocket.dll
+ 
+ SOURCES = \
++	notsup.c \
+ 	websocket.c
+diff --git a/dlls/websocket/websocket.spec b/dlls/websocket/websocket.spec
+--- a/dlls/websocket/websocket.spec
++++ b/dlls/websocket/websocket.spec
+@@ -1,13 +1,13 @@
+ @ stdcall WebSocketAbortHandle(long)
+-@ stub WebSocketBeginClientHandshake
+-@ stub WebSocketBeginServerHandshake
+-@ stub WebSocketCompleteAction
++@ stdcall WebSocketBeginClientHandshake(ptr ptr ptr ptr ptr ptr ptr ptr) aw_WebSocketBeginClientHandshake
++@ stdcall WebSocketBeginServerHandshake(ptr ptr ptr ptr ptr ptr ptr) aw_WebSocketBeginServerHandshake
++@ stdcall WebSocketCompleteAction(ptr ptr ptr) aw_WebSocketCompleteAction
+ @ stdcall WebSocketCreateClientHandle(ptr long ptr)
+-@ stub WebSocketCreateServerHandle
++@ stdcall WebSocketCreateServerHandle(ptr ptr ptr) aw_WebSocketCreateServerHandle
+ @ stdcall WebSocketDeleteHandle(long)
+-@ stub WebSocketEndClientHandshake
+-@ stub WebSocketEndServerHandshake
+-@ stub WebSocketGetAction
++@ stdcall WebSocketEndClientHandshake(ptr ptr ptr ptr ptr ptr ptr) aw_WebSocketEndClientHandshake
++@ stdcall WebSocketEndServerHandshake(ptr) aw_WebSocketEndServerHandshake
++@ stdcall WebSocketGetAction(ptr ptr ptr ptr ptr ptr ptr ptr) aw_WebSocketGetAction
+ @ stub WebSocketGetGlobalProperty
+-@ stub WebSocketReceive
+-@ stub WebSocketSend
++@ stdcall WebSocketReceive(ptr ptr ptr) aw_WebSocketReceive
++@ stdcall WebSocketSend(ptr ptr ptr ptr) aw_WebSocketSend
+diff --git a/dlls/wevtapi/Makefile.in b/dlls/wevtapi/Makefile.in
+--- a/dlls/wevtapi/Makefile.in
++++ b/dlls/wevtapi/Makefile.in
+@@ -2,4 +2,5 @@
+ IMPORTLIB = wevtapi
+ 
+ SOURCES = \
++	notsup.c \
+ 	main.c
+diff --git a/dlls/wevtapi/wevtapi.spec b/dlls/wevtapi/wevtapi.spec
+--- a/dlls/wevtapi/wevtapi.spec
++++ b/dlls/wevtapi/wevtapi.spec
+@@ -43,4 +43,4 @@
+ @ stdcall EvtSetChannelConfigProperty(ptr long long ptr)
+ @ stub EvtSetObjectArrayProperty
+ @ stdcall EvtSubscribe(ptr ptr wstr wstr ptr ptr ptr long)
+-@ stub EvtUpdateBookmark
++@ stdcall EvtUpdateBookmark(ptr ptr) aw_EvtUpdateBookmark
+diff --git a/dlls/winusb/Makefile.in b/dlls/winusb/Makefile.in
+--- a/dlls/winusb/Makefile.in
++++ b/dlls/winusb/Makefile.in
+@@ -1,4 +1,5 @@
+ MODULE    = winusb.dll
+ 
+ SOURCES = \
++	notsup.c \
+ 	main.c
+diff --git a/dlls/winusb/winusb.spec b/dlls/winusb/winusb.spec
+--- a/dlls/winusb/winusb.spec
++++ b/dlls/winusb/winusb.spec
+@@ -1,22 +1,22 @@
+ @ stub WinUsb_AbortPipe
+-@ stub WinUsb_ControlTransfer
++@ stdcall WinUsb_ControlTransfer(ptr ptr ptr ptr ptr ptr ptr ptr) aw_WinUsb_ControlTransfer
+ @ stub WinUsb_FlushPipe
+ @ stdcall WinUsb_Free(ptr)
+-@ stub WinUsb_GetAssociatedInterface
++@ stdcall WinUsb_GetAssociatedInterface(ptr ptr ptr) aw_WinUsb_GetAssociatedInterface
+ @ stub WinUsb_GetCurrentAlternateSetting
+ @ stub WinUsb_GetDescriptor
+-@ stub WinUsb_GetOverlappedResult
++@ stdcall WinUsb_GetOverlappedResult(ptr ptr ptr ptr) aw_WinUsb_GetOverlappedResult
+ @ stub WinUsb_GetPipePolicy
+ @ stub WinUsb_GetPowerPolicy
+-@ stub WinUsb_Initialize
++@ stdcall WinUsb_Initialize(ptr ptr) aw_WinUsb_Initialize
+ @ stub WinUsb_ParseConfigurationDescriptor
+ @ stub WinUsb_ParseDescriptors
+ @ stub WinUsb_QueryDeviceInformation
+ @ stub WinUsb_QueryInterfaceSettings
+ @ stub WinUsb_QueryPipe
+-@ stub WinUsb_ReadPipe
+-@ stub WinUsb_ResetPipe
+-@ stub WinUsb_SetCurrentAlternateSetting
++@ stdcall WinUsb_ReadPipe(ptr ptr ptr ptr ptr ptr) aw_WinUsb_ReadPipe
++@ stdcall WinUsb_ResetPipe(ptr ptr) aw_WinUsb_ResetPipe
++@ stdcall WinUsb_SetCurrentAlternateSetting(ptr ptr) aw_WinUsb_SetCurrentAlternateSetting
+ @ stub WinUsb_SetPipePolicy
+ @ stub WinUsb_SetPowerPolicy
+-@ stub WinUsb_WritePipe
++@ stdcall WinUsb_WritePipe(ptr ptr ptr ptr ptr ptr) aw_WinUsb_WritePipe
+diff --git a/dlls/wmvcore/Makefile.in b/dlls/wmvcore/Makefile.in
+--- a/dlls/wmvcore/Makefile.in
++++ b/dlls/wmvcore/Makefile.in
+@@ -7,6 +7,7 @@
+ VER_PRODUCTVERSION      = 12,0,7601,17514
+ 
+ SOURCES = \
++	notsup.c \
+ 	async_reader.c \
+ 	wmvcore_main.c \
+ 	writer.c
+diff --git a/dlls/wmvcore/wmvcore.spec b/dlls/wmvcore/wmvcore.spec
+--- a/dlls/wmvcore/wmvcore.spec
++++ b/dlls/wmvcore/wmvcore.spec
+@@ -6,7 +6,7 @@
+ @ stdcall -private DllRegisterServer()
+ @ stdcall WMCreateBackupRestorer(ptr ptr)
+ @ stdcall WMCreateEditor(ptr)
+-@ stub WMCreateIndexer
++@ stdcall WMCreateIndexer(ptr) aw_WMCreateIndexer
+ @ stdcall WMCreateProfileManager(ptr)
+ @ stdcall WMCreateReader(ptr long ptr)
+ @ stdcall WMCreateReaderPriv(ptr)
+diff --git a/dlls/atmlib/notsup.c b/dlls/atmlib/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/atmlib/notsup.c
+@@ -0,0 +1,31 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++LONG WINAPI aw_ATMGetFontPathsA(void *a0, void *a1, void *a2)
++{
++    return 0;
++}
++
++LONG WINAPI aw_ATMGetMenuNameA(void *a0, void *a1, void *a2)
++{
++    return 0;
++}
++
++LONG WINAPI aw_ATMGetMenuNameW(void *a0, void *a1, void *a2)
++{
++    return 0;
++}
++
++LONG WINAPI aw_ATMGetPostScriptNameA(void *a0, void *a1, void *a2)
++{
++    return 0;
++}
++
++LONG WINAPI aw_ATMGetPostScriptNameW(void *a0, void *a1, void *a2)
++{
++    return 0;
++}
+diff --git a/dlls/bluetoothapis/notsup.c b/dlls/bluetoothapis/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/bluetoothapis/notsup.c
+@@ -0,0 +1,31 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++HRESULT WINAPI aw_BluetoothGATTGetDescriptors(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_BluetoothGATTRegisterEvent(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_BluetoothGATTSetCharacteristicValue(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_BluetoothGATTSetDescriptorValue(void *a0, void *a1, void *a2, void *a3)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_BluetoothGATTUnregisterEvent(void *a0, void *a1)
++{
++    return E_NOTIMPL;
++}
+diff --git a/dlls/crypt32/notsup.c b/dlls/crypt32/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/crypt32/notsup.c
+@@ -0,0 +1,16 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++BOOL WINAPI aw_CryptDecryptMessage(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_CryptExportPublicKeyInfoFromBCryptKeyHandle(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
+diff --git a/dlls/esent/notsup.c b/dlls/esent/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/esent/notsup.c
+@@ -0,0 +1,86 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++LONG WINAPI aw_JetAttachDatabase2W(void *a0, void *a1, void *a2, void *a3)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetBeginSessionW(void *a0, void *a1, void *a2, void *a3)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetCloseDatabase(void *a0, void *a1, void *a2)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetCloseTable(void *a0, void *a1)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetCreateInstanceW(void *a0, void *a1)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetDetachDatabase2W(void *a0, void *a1, void *a2)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetEndSession(void *a0, void *a1)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetGetSystemParameterW(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetGetTableColumnInfoW(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetInit(void *a0)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetMove(void *a0, void *a1, void *a2, void *a3)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetOpenDatabaseW(void *a0, void *a1, void *a2, void *a3, void *a4)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetOpenTableW(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetRetrieveColumn(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetSetSystemParameterW(void *a0, void *a1, void *a2, void *a3, void *a4)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
++
++LONG WINAPI aw_JetTerm(void *a0)
++{
++    return -1001; /* JET_errFeatureNotAvailable */
++}
+diff --git a/dlls/fltlib/notsup.c b/dlls/fltlib/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/fltlib/notsup.c
+@@ -0,0 +1,21 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++HRESULT WINAPI aw_FilterGetMessage(void *a0, void *a1, void *a2, void *a3)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_FilterReplyMessage(void *a0, void *a1, void *a2)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_FilterSendMessage(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return E_NOTIMPL;
++}
+diff --git a/dlls/ncrypt/notsup.c b/dlls/ncrypt/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/ncrypt/notsup.c
+@@ -0,0 +1,21 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++LONG WINAPI aw_NCryptCreateClaim(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    return 0x80090029; /* NTE_NOT_SUPPORTED */
++}
++
++LONG WINAPI aw_NCryptDeriveKey(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    return 0x80090029; /* NTE_NOT_SUPPORTED */
++}
++
++LONG WINAPI aw_NCryptSecretAgreement(void *a0, void *a1, void *a2, void *a3)
++{
++    return 0x80090029; /* NTE_NOT_SUPPORTED */
++}
+diff --git a/dlls/rpcrt4/notsup.c b/dlls/rpcrt4/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/rpcrt4/notsup.c
+@@ -0,0 +1,16 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++LONG WINAPI aw_I_RpcOpenClientProcess(void *a0, void *a1, void *a2)
++{
++    return 1764; /* RPC_S_CANNOT_SUPPORT */
++}
++
++LONG WINAPI aw_NdrStubCall3(void *a0, void *a1, void *a2, void *a3)
++{
++    return 1764; /* RPC_S_CANNOT_SUPPORT */
++}
+diff --git a/dlls/tbs/notsup.c b/dlls/tbs/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/tbs/notsup.c
+@@ -0,0 +1,11 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++LONG WINAPI aw_Tbsi_Get_TCG_Log_Ex(void *a0, void *a1, void *a2)
++{
++    return 0x8028400f; /* TBS_E_TPM_NOT_FOUND */
++}
+diff --git a/dlls/tdh/notsup.c b/dlls/tdh/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/tdh/notsup.c
+@@ -0,0 +1,21 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++DWORD WINAPI aw_TdhGetEventInformation(void *a0, void *a1, void *a2, void *a3, void *a4)
++{
++    return ERROR_NOT_SUPPORTED;
++}
++
++DWORD WINAPI aw_TdhGetProperty(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    return ERROR_NOT_SUPPORTED;
++}
++
++DWORD WINAPI aw_TdhGetPropertySize(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    return ERROR_NOT_SUPPORTED;
++}
+diff --git a/dlls/websocket/notsup.c b/dlls/websocket/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/websocket/notsup.c
+@@ -0,0 +1,50 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++HRESULT WINAPI aw_WebSocketBeginClientHandshake(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketBeginServerHandshake(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    return E_NOTIMPL;
++}
++
++void WINAPI aw_WebSocketCompleteAction(void *a0, void *a1, void *a2)
++{
++}
++
++HRESULT WINAPI aw_WebSocketCreateServerHandle(void *a0, void *a1, void *a2)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketEndClientHandshake(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketEndServerHandshake(void *a0)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketGetAction(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketReceive(void *a0, void *a1, void *a2)
++{
++    return E_NOTIMPL;
++}
++
++HRESULT WINAPI aw_WebSocketSend(void *a0, void *a1, void *a2, void *a3)
++{
++    return E_NOTIMPL;
++}
+diff --git a/dlls/wevtapi/notsup.c b/dlls/wevtapi/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/wevtapi/notsup.c
+@@ -0,0 +1,11 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++BOOL WINAPI aw_EvtUpdateBookmark(void *a0, void *a1)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
+diff --git a/dlls/winusb/notsup.c b/dlls/winusb/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/winusb/notsup.c
+@@ -0,0 +1,46 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++BOOL WINAPI aw_WinUsb_ControlTransfer(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5, void *a6, void *a7)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_GetAssociatedInterface(void *a0, void *a1, void *a2)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_GetOverlappedResult(void *a0, void *a1, void *a2, void *a3)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_Initialize(void *a0, void *a1)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_ReadPipe(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_ResetPipe(void *a0, void *a1)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_SetCurrentAlternateSetting(void *a0, void *a1)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
++
++BOOL WINAPI aw_WinUsb_WritePipe(void *a0, void *a1, void *a2, void *a3, void *a4, void *a5)
++{
++    SetLastError(ERROR_NOT_SUPPORTED); return FALSE;
++}
+diff --git a/dlls/wmvcore/notsup.c b/dlls/wmvcore/notsup.c
+new file mode 100644
+--- /dev/null
++++ b/dlls/wmvcore/notsup.c
+@@ -0,0 +1,11 @@
++/* Windows subsystems Wine does not have: fail as a machine without them does, not with an abort. */
++
++#include <stdarg.h>
++#include "windef.h"
++#include "winbase.h"
++#include "winerror.h"
++
++HRESULT WINAPI aw_WMCreateIndexer(void *a0)
++{
++    return E_NOTIMPL;
++}

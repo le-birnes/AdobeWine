@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-10-31
 
-- **Now based on Wine 11.20**, with 98 patches. New: patches 0092-0100 (installers, Acrobat, thread start-up).
+- **Five more apps in the menu and the AdobeWine window:** InDesign, Bridge, Lightroom Classic, Lightroom and Acrobat.
+  `adobewine off` closes them too.
+- **Acrobat no longer crashes at start** in the setups where it did: two bugs in Wine's signature checking, one a
+  race between threads (0103). The background helpers acrotray and AdobeCollabSync stopped aborting too.
+- **The Windows side is mapped:** every Windows function imported by 5664 Adobe program files was checked against
+  Wine ([docs/DLL-MAP.md](docs/DLL-MAP.md)). Of 107 gaps, 104 are closed (0101, 0102). Most of those report "not
+  available here" where Windows without that feature would; they don't add the feature. The other 3 belong to DXVK
+  and vkd3d. A function that exists isn't proof it behaves like Windows: that is what the app tests are for.
+- Arch: a ready-made package on the release page, installed with one `pacman -U` command.
+- **Now based on Wine 11.20**, with 101 patches. New: patches 0092-0103 (installers, Acrobat, thread start-up).
 - Bridge, Lightroom Classic and Lightroom install from Creative Cloud and open (first tests, 2026-10-30).
 - Lightroom Classic: 21 everyday functions tested and working, including AI Subject masking. Bridge: 26 tested and working, including Batch Rename, Camera Raw, Image Processor and Output to PDF.
 - A failed install no longer breaks the other apps: when Acrobat's installer failed, Wine's rollback deleted the

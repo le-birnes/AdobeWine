@@ -29,7 +29,12 @@ APPS = [('photoshop', 'Photoshop', 'Adobe Photoshop', 'Photoshop.exe'),
         ('premiere', 'Premiere Pro', 'Adobe Premiere Pro', 'Adobe Premiere Pro.exe'),
         ('aftereffects', 'After Effects', 'Adobe After Effects', 'Support Files/AfterFX.exe'),
         ('audition', 'Audition', 'Adobe Audition', 'Adobe Audition.exe'),
-        ('encoder', 'Media Encoder', 'Adobe Media Encoder', 'Adobe Media Encoder.exe')]
+        ('encoder', 'Media Encoder', 'Adobe Media Encoder', 'Adobe Media Encoder.exe'),
+        ('indesign', 'InDesign', 'Adobe InDesign', 'InDesign.exe'),
+        ('bridge', 'Bridge', 'Adobe Bridge', 'Adobe Bridge.exe'),
+        ('lightroomclassic', 'Lightroom Classic', 'Adobe Lightroom Classic', 'Lightroom.exe'),
+        ('lightroom', 'Lightroom', 'Adobe Lightroom CC', 'lightroom.exe'),
+        ('acrobat', 'Acrobat', 'Acrobat DC', 'Acrobat/Acrobat.exe')]
 CC_EXE = os.path.join(PF, 'Adobe Creative Cloud', 'ACC', 'Creative Cloud.exe')
 
 
@@ -39,6 +44,8 @@ def installed_apps():
         dirs = sorted(glob.glob(os.path.join(PF, folder + ' 20[0-9][0-9]')))
         if dirs and os.path.isfile(os.path.join(dirs[-1], exe)):
             out.append((cmd, f'{name} {dirs[-1][-4:]}'))
+        elif os.path.isfile(os.path.join(PF, folder, exe)):             # these folders carry no year
+            out.append((cmd, name))
     return out
 
 

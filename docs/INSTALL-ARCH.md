@@ -9,7 +9,7 @@ There are two AUR packages:
 | Package | What it does | Time to install |
 |---|---|---|
 | `adobewine-bin` | prebuilt Wine runtime from the GitHub release | about 1 minute |
-| `adobewine` | builds Wine 11.18 + the patches on your machine | 20-60 minutes |
+| `adobewine` | builds Wine 11.20 + the patches on your machine | 20-60 minutes |
 
 Both install the same files to `/opt/adobewine` and the `adobewine` command to `/usr/bin`.
 Your prefix and the Adobe apps live in your home folder (`~/.local/share/adobewine`), not
@@ -64,17 +64,19 @@ checkout of the AUR package installs them without building anything.
 
 ## 2. Install AdobeWine
 
-> **AUR submission pending.** Until `adobewine` / `adobewine-bin` appear on the AUR, build
-> the same package from this repository:
+> **AUR registration pending.** Until `adobewine` / `adobewine-bin` appear on the AUR, install the ready-made
+> package from the [release](https://github.com/le-birnes/AdobeWine/releases). pacman fetches the dependencies:
+>
+> ```sh
+> sudo pacman -U https://github.com/le-birnes/AdobeWine/releases/download/v0.5.0/adobewine-0.5.0-1-x86_64.pkg.tar.zst
+> ```
+>
+> Or build it from this repository:
 >
 > ```sh
 > git clone https://github.com/le-birnes/AdobeWine.git
 > cd AdobeWine/packaging/aur/adobewine && makepkg -si
 > ```
->
-> or the prebuilt one (downloads the runtime from the
-> [latest release](https://github.com/le-birnes/AdobeWine/releases), currently 0.4.1):
-> `cd AdobeWine/packaging/aur/adobewine-bin && makepkg -si`.
 
 Once on the AUR, with an AUR helper (`yay` or `paru`):
 

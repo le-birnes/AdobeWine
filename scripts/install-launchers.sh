@@ -59,6 +59,11 @@ entry premiere "Adobe Premiere Pro" "AudioVideo;Video;AudioVideoEditing;" "" "ad
 entry audition "Adobe Audition" "AudioVideo;Audio;AudioVideoEditing;" "audio/x-wav;audio/wav;audio/mpeg;audio/flac;" "adobe audition.exe" "$PF/$(latest "Adobe Audition")/Adobe Audition.exe"
 entry encoder "Adobe Media Encoder" "AudioVideo;Video;" "" "adobe media encoder.exe" "$PF/$(latest "Adobe Media Encoder")/Adobe Media Encoder.exe"
 entry aftereffects "Adobe After Effects" "AudioVideo;Video;AudioVideoEditing;" "" "afterfx.exe" "$PF/$(latest "Adobe After Effects")/Support Files/AfterFX.exe"
+entry indesign "Adobe InDesign" "Graphics;Publishing;" "application/x-indesign;" "indesign.exe" "$PF/$(latest "Adobe InDesign")/InDesign.exe"
+entry bridge "Adobe Bridge" "Graphics;Viewer;" "" "adobe bridge.exe" "$PF/$(latest "Adobe Bridge")/Adobe Bridge.exe"
+entry lightroomclassic "Adobe Lightroom Classic" "Graphics;Photography;" "" "lightroom.exe" "$PF/Adobe Lightroom Classic/Lightroom.exe"
+entry lightroom "Adobe Lightroom" "Graphics;Photography;" "" "lightroom.exe" "$PF/Adobe Lightroom CC/lightroom.exe"
+entry acrobat "Adobe Acrobat" "Office;Viewer;" "application/pdf;" "acrobat.exe" "$PF/Acrobat DC/Acrobat/Acrobat.exe"
 entry cc "Adobe Creative Cloud" "Graphics;" "" "creative cloud.exe" "$PF/Adobe Creative Cloud/ACC/Creative Cloud.exe"
 cat > "$APPS/adobewine-off.desktop" <<EOF
 [Desktop Entry]

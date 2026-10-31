@@ -1,0 +1,59 @@
+From: AdobeWine
+Subject: [PATCH] crypt32, wintrust: the enumerator's reference under the store's lock; no success without indirect data.
+
+crypt32: MemStore_enumContext took its reference after leaving the lock, so a delete on another thread could free the
+context first: assert(!context->ref) in Context_Free, which aborted acrotray and AdobeCollabSync.
+wintrust: a decode failing with no last error returned success, and SOFTPUB_VerifyImageHash read a NULL
+psIndirectData: Acrobat crashed at start in the Acrobat prefix where signature checks ran on several threads.
+Test: wine/tests/certrace (crashed 3 of 3 before, passes 3 of 3 after).
+
+---
+diff --git a/dlls/crypt32/store.c b/dlls/crypt32/store.c
+--- a/dlls/crypt32/store.c
++++ b/dlls/crypt32/store.c
+@@ -233,6 +233,8 @@
+     }
+     if (!next)
+         ret = NULL;
++    else
++        Context_AddRef(ret); /* under the lock: a delete must not free it first */
+     LeaveCriticalSection(&store->cs);
+ 
+     if (!ret) {
+@@ -240,7 +242,6 @@
+         return NULL;
+     }
+ 
+-    Context_AddRef(ret);
+     return ret;
+ }
+ 
+diff --git a/dlls/wintrust/softpub.c b/dlls/wintrust/softpub.c
+--- a/dlls/wintrust/softpub.c
++++ b/dlls/wintrust/softpub.c
+@@ -315,6 +315,12 @@
+     HCRYPTHASH hash = 0;
+     ALG_ID algID;
+ 
++    if (!indirect)
++    {
++        ERR("no indirect data\n");
++        return TRUST_E_SYSTEM_ERROR;
++    }
++
+     if (((ULONG_PTR)indirect->Data.pszObjId >> 16) == 0 ||
+         strcmp(indirect->Data.pszObjId, SPC_PE_IMAGE_DATA_OBJID))
+     {
+@@ -459,6 +465,12 @@
+         err = GetLastError();
+ 
+ error:
++    /* A failed call may leave no last error; success here would send a NULL psIndirectData to the hash check. */
++    if (!ret && !err)
++    {
++        WARN("decode of %s failed without an error\n", debugstr_a(oid));
++        err = TRUST_E_SYSTEM_ERROR;
++    }
+     TRACE("returning %ld\n", err);
+     data->psPfns->pfnFree(oid);
+     data->psPfns->pfnFree(buf);

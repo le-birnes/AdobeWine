@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # AdobeWine launcher.
 #   adobewine setup [--windows-fonts DIR] [--dpi N]  create or refresh the Wine prefix (run once)
-#   adobewine photoshop|illustrator|premiere|audition|encoder|aftereffects|cc [files...]
+#   adobewine photoshop|illustrator|premiere|audition|encoder|aftereffects|indesign|
+#             bridge|lightroomclassic|lightroom|acrobat|cc [files...]
 #   adobewine run <program.exe> [args...]     run any Windows program in the AdobeWine prefix
 #   adobewine off [--force]                   close the Adobe apps like their close button, then stop Wine
 #   adobewine fix-signin                      use the built-in browser for Adobe sign-in (see docs)
@@ -24,6 +25,11 @@ case "$cmd" in
   audition)    exe="$P\\$(latest "Adobe Audition")\\Adobe Audition.exe" ;;
   encoder)     exe="$P\\$(latest "Adobe Media Encoder")\\Adobe Media Encoder.exe" ;;
   aftereffects) exe="$P\\$(latest "Adobe After Effects")\\Support Files\\AfterFX.exe" ;;
+  indesign)    exe="$P\\$(latest "Adobe InDesign")\\InDesign.exe" ;;
+  bridge)      exe="$P\\$(latest "Adobe Bridge")\\Adobe Bridge.exe" ;;
+  lightroomclassic) exe="$P\\Adobe Lightroom Classic\\Lightroom.exe" ;;
+  lightroom)   exe="$P\\Adobe Lightroom CC\\lightroom.exe" ;;
+  acrobat)     exe="$P\\Acrobat DC\\Acrobat\\Acrobat.exe" ;;
   cc)          exe="$P\\Adobe Creative Cloud\\ACC\\Creative Cloud.exe" ;;
   run)         exe="$1"; shift ;;
   setup)       exec "$ADOBEWINE_SRC/scripts/setup-prefix.sh" "$@" ;;
@@ -36,8 +42,8 @@ case "$cmd" in
       W="$ADOBEWINE_SRC/lib/winclose.exe"
       [ -f "$W" ] || W="$ADOBEWINE_HOME/winclose.exe"
       [ -f "$W" ] || x86_64-w64-mingw32-gcc -O2 -o "$W" "$ADOBEWINE_SRC/tools/winclose/winclose.c"
-      wine "$W" Photoshop.exe Illustrator.exe "Adobe Audition.exe" "Adobe Premiere Pro.exe" "Adobe Media Encoder.exe" >/dev/null 2>&1
-      apps='^(Photoshop|Illustrator|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder)\.exe'
+      wine "$W" Photoshop.exe Illustrator.exe "Adobe Audition.exe" "Adobe Premiere Pro.exe" "Adobe Media Encoder.exe" AfterFX.exe InDesign.exe "Adobe Bridge.exe" Lightroom.exe Acrobat.exe >/dev/null 2>&1
+      apps='^(Photoshop|Illustrator|Adobe Audition|Adobe Premiere Pro|Adobe Media Encoder|AfterFX|InDesign|Adobe Bridge|Lightroom|Acrobat)\.exe'
       for _ in $(seq 60); do wine tasklist 2>/dev/null | grep -qiE "$apps" || break; sleep 1; done
       if wine tasklist 2>/dev/null | grep -qiE "$apps"; then
         echo "An Adobe app is still open (maybe asking to save). Close it, or run: adobewine off --force"; exit 1
