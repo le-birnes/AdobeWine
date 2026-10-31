@@ -1,0 +1,57 @@
+From: AdobeWine
+Subject: [PATCH] user32: Implement EndTask.
+
+AdobeCollabSync calls it and Wine's stub aborted the process ("unimplemented function user32.dll.EndTask").
+EndTask sends WM_CLOSE; with force it ends the process when the window stays.
+Test: wine/tests/endtask: bad window, window closes, no force leaves it, force ends the process.
+
+---
+diff --git a/dlls/user32/user32.spec b/dlls/user32/user32.spec
+--- a/dlls/user32/user32.spec
++++ b/dlls/user32/user32.spec
+@@ -463,7 +463,7 @@
+ @ stdcall EndDialog(long long)
+ @ stdcall EndMenu() NtUserEndMenu
+ @ stdcall EndPaint(long ptr) NtUserEndPaint
+-@ stub EndTask
++@ stdcall EndTask(long long long)
+ # @ stub EnterReaderModeHelper
+ @ stdcall EnumChildWindows(long ptr long)
+ @ stdcall EnumClipboardFormats(long) NtUserEnumClipboardFormats
+diff --git a/dlls/user32/win.c b/dlls/user32/win.c
+index bcf88ee..0b2dd53 100644
+--- a/dlls/user32/win.c
++++ b/dlls/user32/win.c
+@@ -1812,3 +1812,32 @@ WORD WINAPI TileChildWindows( HWND parent, UINT flags )
+ {
+     return TileWindows( parent, flags, NULL, 0, NULL );
+ }
++
++/**********************************************************************
++ *              EndTask (USER32.@)
++ *
++ * Asks a window to close; with force, ends its process when the window stays.
++ */
++BOOL WINAPI EndTask( HWND hwnd, BOOL shutdown, BOOL force )
++{
++    DWORD_PTR result;
++    DWORD pid = 0;
++    HANDLE process;
++    BOOL ret;
++
++    TRACE( "%p %d %d\n", hwnd, shutdown, force );
++
++    if (!GetWindowThreadProcessId( hwnd, &pid ))
++    {
++        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
++        return FALSE;
++    }
++    SendMessageTimeoutW( hwnd, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 5000, &result );
++    if (!IsWindow( hwnd )) return TRUE;
++    if (!force) return FALSE;
++
++    if (!(process = OpenProcess( PROCESS_TERMINATE, FALSE, pid ))) return FALSE;
++    ret = TerminateProcess( process, 0 );
++    CloseHandle( process );
++    return ret;
++}
