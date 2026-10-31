@@ -25,7 +25,7 @@ optdepends=(
   'python-pillow: application icons for the desktop menu entries'
 )
 source=("${url}/releases/download/v${pkgver}/adobewine-${pkgver}-x86_64.tar.zst")
-sha256sums=('fc5de131bfa45a2cbc3e965792dee711ae512910b72b0a9ed5b2743b162f10ac')
+sha256sums=('2bc67a717346b1399e049b67f39b45af0a6f9bec197dfaa32add36312ffb39e3')
 
 package() {
   cp -a "$srcdir/opt" "$pkgdir/"
