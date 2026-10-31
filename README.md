@@ -95,7 +95,7 @@ make it work for everyone else.
 
 ## How it works (for the curious)
 
-AdobeWine is [Wine](https://www.winehq.org) 11.18, the compatibility layer that also runs Windows games on Steam,
+AdobeWine is [Wine](https://www.winehq.org) 11.20, the compatibility layer that also runs Windows games on Steam,
 plus 94 fixes for what Adobe's apps need. Each fix comes from comparing the same task on Windows and under Wine,
 with a small test program that shows the difference. Every fix is listed in [docs/PATCHES.md](docs/PATCHES.md), the
 method is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md), and the fixes are being offered back to the Wine project

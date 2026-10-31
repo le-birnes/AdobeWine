@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Now based on Wine 11.20**, with 97 patches. New: patches 0092-0099 (installers, Acrobat, thread start-up).
 - Bridge, Lightroom Classic and Lightroom install from Creative Cloud and open (first tests, 2026-10-30).
 - Lightroom Classic: 21 everyday functions tested and working, including AI Subject masking. Bridge: 26 tested and working, including Batch Rename, Camera Raw, Image Processor and Output to PDF.
 - A failed install no longer breaks the other apps: when Acrobat's installer failed, Wine's rollback deleted the

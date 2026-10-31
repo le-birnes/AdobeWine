@@ -129,7 +129,7 @@ scripts/build-wine.sh          # 20-60 minutes the first time
 
 If GitHub is unreachable, the same repository is mirrored at `https://ferrarivoz.com/git/AdobeWine.git`.
 
-The script downloads Wine 11.18, applies the patches in `patches/` and installs the
+The script downloads Wine 11.20, applies the patches in `patches/` and installs the
 result into `~/.local/share/adobewine/runtime`. Later runs are much faster when
 `ccache` is installed.
 

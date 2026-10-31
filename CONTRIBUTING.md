@@ -27,12 +27,12 @@ anything copied from your Adobe account.
 3. Fix Wine so it gives the Windows result, without breaking Wine's own conformance tests
    for that module (`make -C <build>/dlls/<module>/tests test` when practical).
 4. Add the patch as `patches/NNNN-module-short-description.patch` (`git diff` against Wine
-   11.18 with all earlier patches applied), the test under `tests/`, and a line in
+   11.20 with all earlier patches applied), the test under `tests/`, and a line in
    `docs/PATCHES.md`.
 5. Open a pull request saying what Adobe workflow it fixes and how you checked it.
 
 `scripts/build-wine.sh` rebuilds from a clean tree with all patches. CI checks that
-every patch still applies to Wine 11.18.
+every patch still applies to Wine 11.20.
 
 ## Upstreaming
 

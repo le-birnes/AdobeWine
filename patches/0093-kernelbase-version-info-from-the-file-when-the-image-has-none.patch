@@ -1,0 +1,40 @@
+From: AdobeWine
+Subject: [PATCH] kernelbase: Read the version resource from the file when the mapped image has none.
+
+GetFileVersionInfoSize/GetFileVersionInfo map the file with LOAD_LIBRARY_AS_IMAGE_RESOURCE. For a dll in system32,
+ntdll swaps that image mapping for Wine's builtin (default load order), so the version of a native dll that sits
+there (Microsoft's vcruntime140.dll, concrt140.dll, msvcp140_1.dll 14.51) read as "no resource" (error 1812):
+Wine's builtins of those carry none. Windows reads the file on disk. msi then compared such files by size, overwrote
+the prefix's 14.51 runtime with Acrobat's bundled 14.44 and, when the install failed, deleted it (see 0094): every
+Adobe app stopped starting (c0000135). When the mapped image has no version resource, the file is now read directly
+(the existing path for files that do not load).
+Test: a small GetFileVersionInfoW probe on system32\vcruntime140/concrt140/msvcp140_1: 1812 before, 14.51.36247.0
+after; kernel32 unchanged (10.0.19045.5796). Acrobat 26.002 MSI on a clean prefix: "keeping vcruntime140 (new
+version 14.44.35211.0 old version 14.51.36247.0)", as Windows.
+---
+diff --git a/dlls/kernelbase/version.c b/dlls/kernelbase/version.c
+index 809577a..1327b86 100644
+--- a/dlls/kernelbase/version.c
++++ b/dlls/kernelbase/version.c
+@@ -791,7 +791,9 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD r
+         }
+         FreeLibrary( hModule );
+     }
+-    else
++    /* Mapping a system32 dll as an image resource maps Wine's builtin in its place (load order), which may carry no
++     * version resource. Windows reads the file on disk, so read it directly when the mapped image had none. */
++    if (magic == 1)
+     {
+         HANDLE handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      NULL, OPEN_EXISTING, 0, 0 );
+@@ -899,7 +901,9 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD ignored,
+         }
+         FreeLibrary( hModule );
+     }
+-    else
++    /* Mapping a system32 dll as an image resource maps Wine's builtin in its place (load order), which may carry no
++     * version resource. Windows reads the file on disk, so read it directly when the mapped image had none. */
++    if (magic == 1)
+     {
+         HANDLE handle = CreateFileW( filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      NULL, OPEN_EXISTING, 0, 0 );

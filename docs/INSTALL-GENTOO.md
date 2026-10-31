@@ -7,7 +7,7 @@ and wine-mono itself, so `adobewine setup` downloads nothing but what winetricks
 
 | Package | What it does |
 |---|---|
-| `app-emulation/wine-adobe` | Wine 11.18 with the AdobeWine patches, in `/usr/lib/wine-adobe-11.18` (slotted next to other Wine versions) |
+| `app-emulation/wine-adobe` | Wine 11.20 with the AdobeWine patches, in `/usr/lib/wine-adobe-11.20` (slotted next to other Wine versions) |
 | `app-emulation/adobewine` | the `adobewine` command and scripts in `/opt/adobewine`, DXVK, vkd3d-proton, the D3D12 shim |
 | `media-fonts/selawik` | Microsoft's open Segoe UI fallback, used when you have no Windows fonts |
 

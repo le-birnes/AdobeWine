@@ -1,0 +1,52 @@
+From: AdobeWine
+Subject: [PATCH] ntdll: Attach and detach threads to the main module built at process start.
+
+A thread started after the program had changed PEB->ImageBaseAddress crashed in loader_init (and on exit in
+LdrShutdownThread): both looked the main module up with get_modref( Peb->ImageBaseAddress ), got NULL for an address
+that has no modref, and read its TlsIndex. In-process unpackers point ImageBaseAddress at their payload; public #18:
+Adobe's Creative_Cloud_Set-Up.exe (32-bit, UPX) on an Intel laptop, c0000005 at loader_init+0x2f4 in 0.4.0's 32-bit
+ntdll, right after its first WMI query. Windows keeps its own pointer to the main module's entry and starts the thread.
+The modref built at process start is now kept and used for thread attach and detach (the address lookup stays as a
+fallback for an ntdll that did not build it).
+Test: wine/tests/loader/imagebase.c (32 and 64 bit): crash before, "thread ran" PASS after. Wine's kernel32:loader,
+kernel32:thread, ntdll:exception, ntdll:thread on both arches unchanged; regress.sh 17/17.
+---
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -186,6 +186,9 @@
+ static RTL_BITMAP tls_expansion_bitmap;
+ 
+ static WINE_MODREF *cached_modref;
++/* the exe as built at process start: threads attach and detach it even after an in-process unpacker pointed
++ * Peb->ImageBaseAddress at its payload, which has no modref (Windows keeps its own pointer too) */
++static WINE_MODREF *main_modref;
+ static WINE_MODREF *last_failed_modref;
+ 
+ static LDR_DDAG_NODE *node_ntdll, *node_kernel32;
+@@ -3975,7 +3978,7 @@
+ 
+     if (!NtCurrentTeb()->SkipThreadAttach)
+     {
+-        wm = get_modref( NtCurrentTeb()->Peb->ImageBaseAddress );
++        wm = main_modref ? main_modref : get_modref( NtCurrentTeb()->Peb->ImageBaseAddress );
+         mark = &NtCurrentTeb()->Peb->LdrData->InInitializationOrderModuleList;
+         for (entry = mark->Blink; entry != mark; entry = entry->Blink)
+         {
+@@ -4499,7 +4502,7 @@
+ 
+         if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
+ 
+-        wm = build_main_module();
++        wm = main_modref = build_main_module();
+         ntdll_module = build_ntdll_module();
+ #ifdef __arm64ec__
+         load_arm64ec_module();
+@@ -4548,7 +4551,7 @@
+             return;
+         }
+ 
+-        wm = get_modref( NtCurrentTeb()->Peb->ImageBaseAddress );
++        wm = main_modref ? main_modref : get_modref( NtCurrentTeb()->Peb->ImageBaseAddress );
+     }
+ 
+     NtCurrentTeb()->FlsSlots = fls_alloc_data();

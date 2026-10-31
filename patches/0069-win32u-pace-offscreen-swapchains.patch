@@ -13,6 +13,7 @@ presenting a D3D11 swapchain in a child window goes from 59 to 237 fps at 240 Hz
 WINE_OFFSCREEN_PACING=0 turns this off and WINE_OFFSCREEN_REFRESH sets the rate.
 ---
 diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 5a7da3b..6d3179a 100644
 --- a/dlls/win32u/vulkan.c
 +++ b/dlls/win32u/vulkan.c
 @@ -26,6 +26,7 @@
@@ -33,8 +34,8 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
  };
  
  static struct swapchain *swapchain_from_handle( VkSwapchainKHR handle )
-@@ -1822,6 +1826,79 @@ static BOOL extents_equals( const VkExtent2D *extents, const RECT *rect )
-     return extents->width == rect->right - rect->left && extents->height == rect->bottom - rect->top;
+@@ -1873,6 +1877,79 @@ static BOOL is_color_space_supported( struct vulkan_physical_device *physical_de
+     return i < format_count;
  }
  
 +static BOOL offscreen_pacing_enabled(void)
@@ -113,7 +114,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
  static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwapchainCreateInfoKHR *create_info,
                                               const VkAllocationCallbacks *allocator, VkSwapchainKHR *ret )
  {
-@@ -1834,6 +1911,11 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+@@ -1885,6 +1962,11 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
      VkSwapchainCreateInfoKHR create_info_host = *create_info;
      VkSurfaceCapabilitiesKHR capabilities;
      VkSwapchainKHR host_swapchain;
@@ -125,7 +126,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
      struct ratio raw_dpi;
      RECT client_rect;
      VkResult res;
-@@ -1879,13 +1961,39 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
+@@ -1935,13 +2017,39 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
          create_info_host.pNext = &scaling;
      }
  
@@ -167,7 +168,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
  
      vulkan_object_init( &swapchain->obj.obj, host_swapchain );
      swapchain->surface = surface;
-@@ -1985,6 +2093,11 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+@@ -2041,6 +2149,11 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
      VkSwapchainKHR swapchains_buffer[16], *swapchains = swapchains_buffer;
      struct vulkan_device *device = queue->device;
      const VkSwapchainKHR *client_swapchains;
@@ -179,7 +180,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
      VkResult res;
  
      TRACE( "queue %p, present_info %p\n", queue, present_info );
-@@ -2009,6 +2122,25 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+@@ -2065,6 +2178,25 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
      client_swapchains = present_info->pSwapchains;
      present_info->pSwapchains = swapchains;
  
@@ -205,7 +206,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
      for (uint32_t i = 0; i < present_info->swapchainCount; i++)
      {
          struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
-@@ -2017,6 +2149,7 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+@@ -2073,6 +2205,7 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
      }
  
      res = device->p_vkQueuePresentKHR( queue->host.queue, present_info );
@@ -213,7 +214,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
  
      for (uint32_t i = 0; i < present_info->swapchainCount; i++)
      {
-@@ -2053,19 +2186,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+@@ -2109,19 +2242,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
       * sparse, copy once more after a short wait. */
      if (res >= VK_SUCCESS)
      {
@@ -233,7 +234,7 @@ diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
          for (uint32_t i = 0; i < present_info->swapchainCount; i++)
          {
              struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
-@@ -2089,6 +2213,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
+@@ -2145,6 +2269,10 @@ static VkResult win32u_vkQueuePresentKHR( VkQueue client_queue, const VkPresentI
              if (waited) client_surface_present( swapchain->surface->client );
              if (now - swapchain->last_present > 25) recopy = TRUE;
              swapchain->last_present = now;

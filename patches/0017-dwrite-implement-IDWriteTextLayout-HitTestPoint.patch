@@ -1,24 +1,28 @@
-diff --git a/dlls/dwrite/layout.c b/dlls/dwrite/layout.c
-index e362aba..9cd162f 100644
+From: AdobeWine
+Subject: [PATCH] dwrite: Implement IDWriteTextLayout::HitTestPoint().
+
+It was a stub returning E_NOTIMPL. Revised 2026-10-29: the point picks the line under it (or the nearest), then the
+box under it (or the nearest) among that line's runs in visual order: one box per cluster of a text run, one per inline
+object (the trimming sign is a non-text, trimmed box; a user object reports its own height). Lines with right-to-left
+runs keep the first version's search through HitTestTextPosition.
+Wine's dwrite:layout test_HitTestPoint on 11.20: the first version failed 8 checks, this one fails 7, all in the trimming
+case where Wine's layout itself trims differently from Windows (the whole text goes under the sign; stock fails
+test_HitTestTextPosition at layout.c:5401 for the same reason). dwrite:font and dwrite:analyzer unchanged (0 failures).
+---
 --- a/dlls/dwrite/layout.c
 +++ b/dlls/dwrite/layout.c
-@@ -4378,9 +4378,57 @@ width_done:
- static HRESULT WINAPI dwritetextlayout_HitTestPoint(IDWriteTextLayout4 *iface,
-     FLOAT pointX, FLOAT pointY, BOOL* is_trailinghit, BOOL* is_inside, DWRITE_HIT_TEST_METRICS *metrics)
- {
--    FIXME("%p, %.8e, %.8e, %p, %p, %p): stub\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
+@@ -4375,12 +4375,150 @@
+     return S_OK;
+ }
+ 
++static HRESULT hit_test_point_by_position(IDWriteTextLayout4 *iface,
++    FLOAT pointX, FLOAT pointY, BOOL* is_trailinghit, BOOL* is_inside, DWRITE_HIT_TEST_METRICS *metrics)
++{
 +    struct dwrite_textlayout *layout = impl_from_IDWriteTextLayout4(iface);
 +    DWRITE_HIT_TEST_METRICS m, best;
 +    float best_distance = -1.0f, x, y;
 +    UINT32 position = 0;
 +    BOOL found = FALSE;
-+    HRESULT hr;
- 
--    return E_NOTIMPL;
-+    TRACE("%p, %.8e, %.8e, %p, %p, %p.\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
-+
-+    if (FAILED(hr = layout_compute_effective_runs(layout)))
-+        return hr;
 +
 +    *is_trailinghit = FALSE;
 +    *is_inside = FALSE;
@@ -58,6 +62,104 @@ index e362aba..9cd162f 100644
 +    *is_inside = best_distance == 0.0f;
 +    *is_trailinghit = pointX >= best.left + best.width / 2.0f;
 +
++    return S_OK;
++}
++
+ static HRESULT WINAPI dwritetextlayout_HitTestPoint(IDWriteTextLayout4 *iface,
+     FLOAT pointX, FLOAT pointY, BOOL* is_trailinghit, BOOL* is_inside, DWRITE_HIT_TEST_METRICS *metrics)
+ {
+-    FIXME("%p, %.8e, %.8e, %p, %p, %p): stub\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
++    struct dwrite_textlayout *layout = impl_from_IDWriteTextLayout4(iface);
++    struct layout_line *line = NULL, *cur;
++    struct layout_effective_run *run;
++    DWRITE_HIT_TEST_METRICS box;
++    float top = 0.0f, line_top = 0.0f, best_distance = -1.0f;
++    BOOL found = FALSE;
++    HRESULT hr;
++
++    TRACE("%p, %.8e, %.8e, %p, %p, %p.\n", iface, pointX, pointY, is_trailinghit, is_inside, metrics);
++
++    if (FAILED(hr = layout_compute_effective_runs(layout)))
++        return hr;
++
++    *is_trailinghit = FALSE;
++    *is_inside = FALSE;
++    memset(metrics, 0, sizeof(*metrics));
++
++    /* The line under the point, or the nearest one. */
++    LIST_FOR_EACH_ENTRY(cur, &layout->lines, struct layout_line, entry)
++    {
++        line = cur;
++        line_top = top;
++        if (pointY < top + cur->metrics.height) break;
++        top += cur->metrics.height;
++    }
++    if (!line) return S_OK;
++
++    LIST_FOR_EACH_ENTRY(run, &line->runs, struct layout_effective_run, line_entry)
++    {
++        /* Right-to-left text keeps the per-position search. */
++        if (!run->object && run->bidi_level & 1)
++            return hit_test_point_by_position(iface, pointX, pointY, is_trailinghit, is_inside, metrics);
++    }
++
++    /* Boxes from left to right: one per cluster of a text run, one per inline object (the trimming sign too). */
++    LIST_FOR_EACH_ENTRY(run, &line->runs, struct layout_effective_run, line_entry)
++    {
++        float x = run->left + run->align_dx;
++        UINT32 cluster = run->first_cluster, done = 0;
+ 
+-    return E_NOTIMPL;
++        while (done < run->length)
++        {
++            float dx = 0.0f;
++
++            memset(&box, 0, sizeof(box));
++            box.left = x;
++            box.top = line_top;
++            box.height = line->metrics.height;
++            box.bidiLevel = run->bidi_level;
++            if (run->object)
++            {
++                box.textPosition = run->start_position;
++                box.length = run->length;
++                box.width = run->width;
++                box.isTrimmed = run->trimming;
++                if (!run->trimming)  /* a user object reports its own height, the trimming sign the line's */
++                {
++                    DWRITE_INLINE_OBJECT_METRICS object_metrics;
++
++                    if (SUCCEEDED(IDWriteInlineObject_GetMetrics(run->object, &object_metrics)))
++                        box.height = object_metrics.height;
++                }
++            }
++            else
++            {
++                box.textPosition = run->run->start_position + layout->clusters[cluster].position;
++                box.length = layout->clustermetrics[cluster].length;
++                box.width = layout->clustermetrics[cluster].width;
++                box.isText = TRUE;
++            }
++
++            if (pointX < box.left) dx = box.left - pointX;
++            else if (pointX >= box.left + box.width) dx = pointX - (box.left + box.width);
++            if (!found || dx < best_distance)
++            {
++                *metrics = box;
++                best_distance = dx;
++                found = TRUE;
++            }
++
++            if (run->object) break;
++            x += box.width;
++            done += max(box.length, 1);
++            cluster++;
++        }
++    }
++
++    if (!found) return S_OK;
++    *is_inside = best_distance == 0.0f && pointY >= line_top && pointY < line_top + line->metrics.height;
++    *is_trailinghit = pointX >= metrics->left + metrics->width / 2.0f;
 +    return S_OK;
  }
  

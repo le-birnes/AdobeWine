@@ -1,0 +1,195 @@
+From: AdobeWine
+Subject: [PATCH] server: Credit a sandboxed process's pipe ends to the process that started it.
+
+Acrobat opens images (File > Create PDF, app.openDoc with bUseConv) in a compute-only sandbox: Acrobat.exe starts a
+"--type=compute-only-broker" Acrobat.exe, which starts a "--type=compute-only-renderer" with a restricted token. The
+renderer creates one pipe and connects to Acrobat's; Acrobat then checks GetNamedPipeClientProcessId and
+GetNamedPipeServerProcessId against the broker's process id and disconnects when they differ. On Windows a process
+with a restricted token cannot open those pipes itself: its broker opens or creates them for it and duplicates the
+handle into it, so the ids are the broker's. Wine does not enforce restricting SIDs, the renderer opens the pipes
+itself, every compute-only session was dropped and Acrobat said "could not open 'image.jpg' because it is either
+not a supported file type or because the file has been damaged" for every image format.
+NtFilterToken now tells the server that restricting SIDs were given (the SIDs are still not stored or checked), the
+token keeps that through duplication, and a pipe end created or opened by a thread or process with such a token
+reports the id of the process that started it. SERVER_PROTOCOL_VERSION 965 -> 966.
+Test: Acrobat usage suite on a fresh prefix: before, create-from-image (jpg, png, bmp, tif, gif) FAIL with the
+alert, file trace shows FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE("ClientProcessId") then FSCTL_PIPE_DISCONNECT in
+every compute-only session; after, create-from-image PASS (one page, image.pdf written).
+---
+diff --git a/dlls/ntdll/unix/security.c b/dlls/ntdll/unix/security.c
+--- a/dlls/ntdll/unix/security.c
++++ b/dlls/ntdll/unix/security.c
+@@ -848,6 +848,7 @@
+     if (flags)
+         FIXME( "flags %#x unsupported\n", flags );
+ 
++    /* the SIDs themselves are not checked yet; the server only records that the token is restricted */
+     if (restrict_sids)
+         FIXME( "support for restricting sids not yet implemented\n" );
+ 
+@@ -880,6 +881,7 @@
+     {
+         req->handle          = wine_server_obj_handle( token );
+         req->flags           = flags;
++        req->restricted      = restrict_sids && restrict_sids->GroupCount;
+         req->privileges_size = privileges_len;
+         wine_server_add_data( req, privileges->Privileges, privileges_len );
+         wine_server_add_data( req, sids, sids_len );
+diff --git a/include/wine/server_protocol.h b/include/wine/server_protocol.h
+--- a/include/wine/server_protocol.h
++++ b/include/wine/server_protocol.h
+@@ -4960,9 +4960,11 @@
+     struct request_header __header;
+     obj_handle_t  handle;
+     unsigned int  flags;
++    int           restricted;
+     data_size_t   privileges_size;
+     /* VARARG(privileges,luid_attr,privileges_size); */
+     /* VARARG(disable_sids,sid); */
++    char __pad_28[4];
+ };
+ struct filter_token_reply
+ {
+@@ -7218,6 +7220,6 @@
+     struct alpc_create_port_reply alpc_create_port_reply;
+ };
+ 
+-#define SERVER_PROTOCOL_VERSION 965
++#define SERVER_PROTOCOL_VERSION 966
+ 
+ #endif /* __WINE_WINE_SERVER_PROTOCOL_H */
+diff --git a/server/named_pipe.c b/server/named_pipe.c
+--- a/server/named_pipe.c
++++ b/server/named_pipe.c
+@@ -1202,6 +1202,18 @@
+     set_error( STATUS_PENDING );
+ }
+ 
++/* The process a pipe end is credited to. A sandboxed process (restricted token) cannot open or create
++ * pipes on Windows: its broker, the parent that started it, does that for it and hands the handle over,
++ * so the other end sees the broker's id. Acrobat's compute-only sandbox checks for exactly that. */
++static process_id_t pipe_end_owner_pid(void)
++{
++    struct token *token = current->token ? current->token : current->process->token;
++
++    if (token && token_is_restricted( token ) && current->process->parent_id)
++        return current->process->parent_id;
++    return get_process_id( current->process );
++}
++
+ static void pipe_end_get_connection_attribute( struct pipe_end *pipe_end )
+ {
+     const char *attr = get_req_data();
+@@ -1365,7 +1377,7 @@
+     server->options = options;
+     init_pipe_end( &server->pipe_end, pipe, pipe_flags, pipe->insize );
+     server->pipe_end.state = FILE_PIPE_LISTENING_STATE;
+-    server->pipe_end.server_pid = get_process_id( current->process );
++    server->pipe_end.server_pid = pipe_end_owner_pid();
+     init_async_queue( &server->listen_q );
+ 
+     list_add_tail( &pipe->listeners, &server->entry );
+@@ -1390,7 +1402,7 @@
+ 
+     init_pipe_end( client, pipe, 0, buffer_size );
+     client->state = FILE_PIPE_CONNECTED_STATE;
+-    client->client_pid = get_process_id( current->process );
++    client->client_pid = pipe_end_owner_pid();
+ 
+     client->fd = alloc_pseudo_fd( &pipe_client_fd_ops, &client->obj, options );
+     if (!client->fd)
+diff --git a/server/protocol.def b/server/protocol.def
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -3568,6 +3568,7 @@
+ @REQ(filter_token)
+     obj_handle_t  handle;          /* handle to the token to duplicate */
+     unsigned int  flags;           /* flags */
++    int           restricted;      /* restricting SIDs were given (they are not stored) */
+     data_size_t   privileges_size; /* size of privileges */
+     VARARG(privileges,luid_attr,privileges_size); /* privileges to remove from new token */
+     VARARG(disable_sids,sid);      /* array of groups to remove from new token */
+diff --git a/server/request_handlers.h b/server/request_handlers.h
+--- a/server/request_handlers.h
++++ b/server/request_handlers.h
+@@ -1993,8 +1993,9 @@
+ C_ASSERT( sizeof(struct duplicate_token_reply) == 16 );
+ C_ASSERT( offsetof(struct filter_token_request, handle) == 12 );
+ C_ASSERT( offsetof(struct filter_token_request, flags) == 16 );
+-C_ASSERT( offsetof(struct filter_token_request, privileges_size) == 20 );
+-C_ASSERT( sizeof(struct filter_token_request) == 24 );
++C_ASSERT( offsetof(struct filter_token_request, restricted) == 20 );
++C_ASSERT( offsetof(struct filter_token_request, privileges_size) == 24 );
++C_ASSERT( sizeof(struct filter_token_request) == 32 );
+ C_ASSERT( offsetof(struct filter_token_reply, new_handle) == 8 );
+ C_ASSERT( sizeof(struct filter_token_reply) == 16 );
+ C_ASSERT( offsetof(struct access_check_request, handle) == 12 );
+diff --git a/server/request_trace.h b/server/request_trace.h
+--- a/server/request_trace.h
++++ b/server/request_trace.h
+@@ -2687,6 +2687,7 @@
+ {
+     fprintf( stderr, " handle=%04x", req->handle );
+     fprintf( stderr, ", flags=%08x", req->flags );
++    fprintf( stderr, ", restricted=%d", req->restricted );
+     fprintf( stderr, ", privileges_size=%u", req->privileges_size );
+     dump_varargs_luid_attr( ", privileges=", min( cur_size, req->privileges_size ));
+     dump_varargs_sid( ", disable_sids=", cur_size );
+diff --git a/server/security.h b/server/security.h
+--- a/server/security.h
++++ b/server/security.h
+@@ -75,6 +75,7 @@
+ extern const struct sid *token_get_owner( struct token *token );
+ extern const struct sid *token_get_primary_group( struct token *token );
+ extern unsigned int token_get_session_id( struct token *token );
++extern int token_is_restricted( struct token *token );
+ extern int token_sid_present( struct token *token, const struct sid *sid, int deny );
+ 
+ static inline struct ace *ace_first( const struct acl *acl )
+diff --git a/server/token.c b/server/token.c
+--- a/server/token.c
++++ b/server/token.c
+@@ -115,6 +115,7 @@
+     int            impersonation_level; /* impersonation level this token is capable of if non-primary token */
+     int            elevation;       /* elevation type */
+     unsigned int   integrity;       /* mandatory integrity RID, 0 = derived from elevation */
++    int            restricted;      /* made by NtFilterToken with restricting SIDs */
+     struct list    kernel_object;   /* list of kernel object pointers */
+ };
+ 
+@@ -489,6 +490,7 @@
+         token->primary_group = NULL;
+         token->elevation = elevation;
+         token->integrity = 0;
++        token->restricted = 0;
+ 
+         /* copy user */
+         token->user = memdup( user, sid_len( user ));
+@@ -594,6 +596,7 @@
+                           0, impersonation_level, src_token->elevation );
+     if (!token) return token;
+     token->integrity = src_token->integrity;
++    token->restricted = src_token->restricted;
+ 
+     /* copy groups */
+     token->primary_group = NULL;
+@@ -1075,6 +1078,11 @@
+     return token->primary_group;
+ }
+ 
++int token_is_restricted( struct token *token )
++{
++    return token->restricted;
++}
++
+ unsigned int token_get_session_id( struct token *token )
+ {
+     return token->session_id;
+@@ -1364,6 +1372,7 @@
+         if (token)
+         {
+             unsigned int access = get_handle_access( current->process, req->handle );
++            if (req->restricted) token->restricted = 1;
+             reply->new_handle = alloc_handle_no_access_check( current->process, token, access, 0 );
+             release_object( token );
+         }

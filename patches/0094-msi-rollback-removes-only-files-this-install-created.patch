@@ -1,0 +1,54 @@
+From: AdobeWine
+Subject: [PATCH] msi: Do not delete files on rollback that this install did not create.
+
+Wine rolls InstallFiles back by running RemoveFiles with every component back at its previous state, so it deleted
+every file of a component that was not installed before, whether this install had written it or not, and including
+files that were on disk before it (overwritten without a backup). Acrobat 26.002's patch carries the VC++ 14.44
+merge modules for system32 and syswow64; when its PatchFiles failed (mspatcha), the rollback deleted the prefix's
+vcruntime140, concrt140, msvcp140_1, msvcp140_atomic_wait, msvcp140_codecvt_ids and vccorlib140, and every Adobe app
+stopped starting. Windows restores overwritten files from its rollback backup and leaves alone what it did not
+install. On rollback a file is now removed only if this install created it.
+Test: Acrobat 26.002 MSI with its patch on a clean prefix copy: fails at PatchFiles as before; afterwards system32
+and syswow64 hold the same VC++ files as before the install (was: six deleted from each), and Acrobat's own files
+are removed as before (3 files left in Acrobat DC, as without the patch).
+---
+diff --git a/dlls/msi/files.c b/dlls/msi/files.c
+index e7686d0..aedb893 100644
+--- a/dlls/msi/files.c
++++ b/dlls/msi/files.c
+@@ -407,6 +407,8 @@ static void schedule_install_files(MSIPACKAGE *package)
+         MSICOMPONENT *comp = file->Component;
+ 
+         file->state = calculate_install_state( package, file );
++        file->existed = file->state != msifs_missing && file->state != msifs_skipped &&
++                        msi_get_file_attributes( package, file->TargetPath ) != INVALID_FILE_ATTRIBUTES;
+         if (file->state == msifs_overwrite && (comp->Attributes & msidbComponentAttributesNeverOverwrite))
+         {
+             TRACE("not overwriting %s\n", debugstr_w(file->TargetPath));
+@@ -1570,6 +1572,14 @@ UINT ACTION_RemoveFiles( MSIPACKAGE *package )
+         if (comp->Action != INSTALLSTATE_ABSENT || comp->Installed == INSTALLSTATE_SOURCE)
+             continue;
+ 
++        /* Rolling back undoes only what this install did. Windows restores overwritten files from its backup;
++         * without one, leave a file that was already there (a shared runtime in system32) instead of deleting it. */
++        if (package->need_rollback && (file->state != msifs_installed || file->existed))
++        {
++            TRACE("rollback: keeping %s, not created by this install\n", debugstr_w(file->TargetPath));
++            continue;
++        }
++
+         if (comp->assembly && !comp->assembly->application)
+             continue;
+ 
+diff --git a/dlls/msi/msipriv.h b/dlls/msi/msipriv.h
+index 0efc367..99ad03b 100644
+--- a/dlls/msi/msipriv.h
++++ b/dlls/msi/msipriv.h
+@@ -620,6 +620,7 @@ typedef struct tagMSIFILE
+     INT Attributes;
+     INT Sequence;
+     msi_file_state state;
++    BOOL existed; /* the target was on disk before InstallFiles */
+     LPWSTR  TargetPath;
+     BOOL IsCompressed;
+     MSIFILEHASHINFO hash;

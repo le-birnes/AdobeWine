@@ -1,4 +1,4 @@
-# AdobeWine as one Flatpak: Wine 11.18 + patches/, the patched GPU layers (patches-deps), the Windows-side helpers,
+# AdobeWine as one Flatpak: Wine 11.20 + patches/, the patched GPU layers (patches-deps), the Windows-side helpers,
 # the tools setup needs, and the first-run window (hub/). Build from the repository root:
 #   flatpak-builder --user --install --force-clean build-flatpak packaging/flatpak/io.github.le_birnes.AdobeWine.yml
 # DXVK, vkd3d-proton, nvidia-libs, wine-gecko/mono and the core fonts are downloaded by `adobewine setup` on first
@@ -102,7 +102,7 @@ modules:
         sha256: 3f62c51e05e3b5a1e6241cf92a371f0be2ea1183aa87b30718bbd40832a8d423
         strip-components: 0
 
-  - name: wine                       # Wine 11.18 + AdobeWine's patches (WoW64: no 32-bit runtime needed)
+  - name: wine                       # Wine 11.20 + AdobeWine's patches (WoW64: no 32-bit runtime needed)
     buildsystem: simple
     build-options:
       env:
@@ -118,8 +118,8 @@ modules:
       - make -C build install
     sources:
       - type: archive
-        url: https://dl.winehq.org/wine/source/11.x/wine-11.18.tar.xz
-        sha256: c6282f6d4daecf11f3ab9f9a2b6c598f67be7e28c363ba2cae8a3c44b611e7a4
+        url: https://dl.winehq.org/wine/source/11.x/wine-11.20.tar.xz
+        sha256: eac8ca448f9c0087f963026b4dc276d1e2b7fbb64056edc093e59bbb7e56fe28
       - type: git                  # the patches, from the last commit: cached by commit (a dir source never is)
         path: ../..
         branch: main

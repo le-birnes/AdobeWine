@@ -1,0 +1,42 @@
+From: AdobeWine
+Subject: [PATCH] kernelbase: GetVolumeInformationW accepts a mounted folder as the root.
+
+GetVolumePathNameW returns a Unix mount point inside a drive as the volume (Z:\m2\ for /m2 on its own file system),
+as Windows does for a mounted folder, but GetVolumeInformationW took only a drive root (exactly one backslash) and
+failed such a path with ERROR_DIR_NOT_ROOT. Windows accepts a mounted folder there. Lightroom Classic asks for the
+volume of the export folder this way and, when the second call fails, gives up the export with "The file could not
+be written" before it renders anything; every export to a folder on such a mount failed (to C: it worked). A path
+that GetVolumePathNameW reports as a volume root is now opened as a directory and queried by handle; other subfolders
+still fail with ERROR_DIR_NOT_ROOT.
+Test: wine/tests/volpath (GetVolumePathNameW + GetVolumeInformationW): Z:\m2\ error 144 before, NTFS after;
+Z:\m2\AdobeWine\ and C:\users\ still 144, C:\ and Z:\ unchanged.
+Test: observer/scenarios/lightroom-classic/usage.sh with the work folder on Z:\m2 (own xfs mount): exports
+14-18 "The file could not be written" before, all 18 tests and the 9 disk checks PASS after.
+---
+diff --git a/dlls/kernelbase/volume.c b/dlls/kernelbase/volume.c
+index edfd777..5b75a1a 100644
+--- a/dlls/kernelbase/volume.c
++++ b/dlls/kernelbase/volume.c
+@@ -162,6 +162,22 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetVolumeInformationW( LPCWSTR root, LPWSTR label,
+     for (i = 4; i < nt_name.Length / sizeof(WCHAR); i++) if (nt_name.Buffer[i] == '\\') break;
+     if (i != nt_name.Length / sizeof(WCHAR) - 1)
+     {
++        WCHAR volume[MAX_PATH];
++
++        /* a mounted folder (GetVolumePathNameW returns Unix mount points inside a drive, e.g. Z:\m2\) is a
++         * volume root too, as on Windows */
++        if (nt_name.Buffer[nt_name.Length / sizeof(WCHAR) - 1] == '\\' &&
++            GetVolumePathNameW( root, volume, ARRAY_SIZE(volume) ) && !wcsicmp( volume, root ))
++        {
++            InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
++            status = NtOpenFile( &handle, SYNCHRONIZE, &attr, &io, FILE_SHARE_READ | FILE_SHARE_WRITE,
++                                 FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
++            if (!set_ntstatus( status )) goto done;
++            ret = GetVolumeInformationByHandleW( handle, label, label_len, serial, filename_len, flags,
++                                                 fsname, fsname_len );
++            NtClose( handle );
++            goto done;
++        }
+         /* check if root contains an explicit subdir */
+         if (root[0] && root[1] == ':') root += 2;
+         while (*root == '\\') root++;

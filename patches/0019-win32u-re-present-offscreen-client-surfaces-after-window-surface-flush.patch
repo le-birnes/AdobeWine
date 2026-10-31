@@ -1,5 +1,5 @@
 diff --git a/dlls/win32u/dce.c b/dlls/win32u/dce.c
-index 0ea79d7..f36813c 100644
+index 67d3dc8..bc0ae5c 100644
 --- a/dlls/win32u/dce.c
 +++ b/dlls/win32u/dce.c
 @@ -620,6 +620,7 @@ void window_surface_flush( struct window_surface *surface )
@@ -27,19 +27,19 @@ index 0ea79d7..f36813c 100644
  
  void window_surface_set_layered( struct window_surface *surface, COLORREF color_key, UINT alpha_bits, UINT alpha_mask )
 diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
-index 5e3f755..dc7eff1 100644
+index 2c92515..959bdbe 100644
 --- a/dlls/win32u/win32u_private.h
 +++ b/dlls/win32u/win32u_private.h
-@@ -331,6 +331,7 @@ extern HWND get_taskman_window(void);
- extern BOOL is_client_surface_window( struct client_surface *surface, HWND hwnd );
+@@ -332,6 +332,7 @@ extern BOOL is_client_surface_window( struct client_surface *surface, HWND hwnd
  extern void client_surface_update( struct client_surface *surface );
+ extern BOOL client_surface_set_color_space( struct client_surface *surface, VkColorSpaceKHR color_space );
  extern BOOL client_surface_get_size( struct client_surface *surface, SIZE *virtual_size, SIZE *monitor_size );
 +extern void present_offscreen_client_surfaces( HWND toplevel );
  extern void use_window_client_surface( struct client_surface *surface, BOOL use );
  extern struct client_surface *get_unused_client_surface( HWND hwnd, int format, BOOL raw );
  extern HICON get_window_icon_info( HWND hwnd, UINT type, HICON icon, ICONINFO *ret );
 diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
-index 9a57c00..bd71999 100644
+index 03ce398..4eec301 100644
 --- a/dlls/win32u/window.c
 +++ b/dlls/win32u/window.c
 @@ -436,13 +436,49 @@ void client_surface_present( struct client_surface *surface )

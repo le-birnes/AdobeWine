@@ -4,7 +4,7 @@
 
 | Layer | What it does | Project |
 |---|---|---|
-| Wine 11.18 + AdobeWine patches | Windows API on Linux | this repository |
+| Wine 11.20 + AdobeWine patches | Windows API on Linux | this repository |
 | DXVK 3.1.1 | Direct3D 8-11 on Vulkan (UI, canvas, video effects) | doitsujin/dxvk |
 | vkd3d-proton 3.0.1 | Direct3D 12 on Vulkan (Illustrator canvas, Photoshop AI features) | HansKristian-Work/vkd3d-proton |
 | nvidia-libs 1.0.2 | CUDA, NVENC/NVDEC, NVAPI, NVML for Windows programs on the Linux NVIDIA driver | SveSop/nvidia-libs |
