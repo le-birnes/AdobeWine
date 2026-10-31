@@ -4,10 +4,17 @@
 
 - Bridge, Lightroom Classic and Lightroom install from Creative Cloud and open (first tests, 2026-10-30).
 - A failed install no longer breaks the other apps: when Acrobat's installer failed, Wine's rollback deleted the
-  Microsoft Visual C++ runtime that every Adobe app needs (patches 0093, 0094). Acrobat itself does not install yet:
-  Wine cannot apply one kind of update patch that Acrobat's installer uses; being worked on.
-- Bridge: 21 everyday functions tested and working (browse, previews, ratings, keywords, metadata, collections,
-  stacks, batch rename, Camera Raw, Image Processor).
+  Microsoft Visual C++ runtime that every Adobe app needs (patches 0093, 0094).
+- **Acrobat Pro installs and works.** Wine can now apply the update patches Acrobat's installer uses (0097, written
+  clean-room from a behaviour description and checked against Windows: all 3534 of Acrobat's patches come out
+  identical), and installs the update's files from the right place (0096, 0098). 17 everyday functions tested and
+  working: open and read, comments and highlights, adding text, rotating, form fields, combining, extracting and
+  deleting pages, export to Word, Excel, PowerPoint, RTF, text, JPEG and PNG, and signing with a digital ID.
+  Creating a PDF from an image does not work yet. Acrobat's Protected Mode is switched off (Wine has no sandbox
+  for it).
+- Bridge: 26 everyday functions tested and working (browse, previews, ratings, keywords, metadata, collections,
+  stacks, batch rename, Camera Raw, Image Processor, the Export panel, contact sheets to PDF, Filter panel, search,
+  workspaces).
 - Lightroom Classic: 18 everyday functions tested and working (import, ratings, keywords, collections, Develop
   edits and presets, virtual copies, export to JPEG, TIFF, PSD and DNG). Exporting to a folder on a separate
   disk or partition (for example a separate /home) failed with "The file could not be written"; fixed (0095).
